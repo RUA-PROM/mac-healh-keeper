@@ -177,6 +177,44 @@ LaunchAgent、アプリ、スクリプト、ログイン項目すべてが綺麗
 
 ---
 
+## 🧪 開発・テスト
+
+純粋ロジック（時刻計算・通知クールダウン・閾値判定・メトリクス取得）を単体テストで保護しています。Swift は XCTest（SwiftPM）、シェルは bats（不在時は自前 assert にフォールバック）で検証します。
+
+生メトリクス取得（swap / 圧縮メモリ / Load Avg / メモリ空き率 / 稼働時間 / Docker）は `scripts/lib/metrics.sh` に集約し、`scripts/bin/mac-health`（status）と `scripts/bin/monitor.sh` が source して参照します。`metrics.sh` は「メトリクス取得」の単一責務に閉じ、閾値判定・通知・ログは含めません（純粋パース関数を `scripts/test/metrics.bats` / `metrics_test.sh` で固定入力検証）。
+
+### テスト実行
+
+```bash
+make test          # Swift（swift test）とシェルテストをまとめて実行
+make test-swift    # Swift（XCTest）のみ
+make test-shell    # シェルテストのみ
+```
+
+`make test` は `swift test` を実行した後、`bats` が入っていれば `bats scripts/test/`（`*.bats` を自動走査）、入っていなければ自動で自前 assert ランナー（`bash scripts/test/monitor_test.sh` と `bash scripts/test/metrics_test.sh`）にフォールバックします。いずれかのテストが失敗すると非 0 終了します。
+
+### bats の導入（任意）
+
+```bash
+brew install bats-core
+```
+
+bats が無い環境でもシェルテストは自前 assert ランナーで実行できるため、導入は任意です。
+
+### 追加ディレクトリ構成（開発用）
+
+| パス | 内容 |
+|---|---|
+| `Sources/MacHealthKit/` | AppKit 非依存の純粋ロジック（`ScheduleTiming`）。`swift test` と配布ビルド（install.sh の swiftc）の両方から参照される |
+| `Tests/MacHealthKitTests/` | XCTest（`ScheduleTiming` の UC1/UC2） |
+| `scripts/test/` | シェルテスト（`monitor.bats` / `monitor_test.sh` で `notification_cooldown.sh` の UC3/UC4、`metrics.bats` / `metrics_test.sh` で `metrics.sh` の UC1/UC2） |
+| `Package.swift` | SwiftPM 構成（テスト専用。配布ビルドには使わない） |
+| `Makefile` | `make test` でテスト一式を実行 |
+
+> SwiftPM の生成物（`.build/`）と `Package.swift` は配布物には含めません。配布ビルドは従来どおり install.sh の `swiftc` を使います。
+
+---
+
 ## 📜 License
 
 [MIT](LICENSE)

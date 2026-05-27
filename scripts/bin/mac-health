@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 source "$ROOT_DIR/lib/log.sh"
 source "$ROOT_DIR/lib/notify.sh"
+source "$ROOT_DIR/lib/metrics.sh"
 
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
 AGENTS=(
@@ -47,29 +48,24 @@ case "$cmd" in
 
     echo ""
     echo "[Current Metrics]"
-    swap=$(sysctl -n vm.swapusage 2>/dev/null | sed -E 's/.*used = ([0-9.]+M).*/\1/')
-    load=$(uptime | sed -E 's/.*load averages?:?[[:space:]]+([0-9.]+).*/\1/')
-    # boot_time パース: "{ sec = 1779856522, usec = ..." → 1779856522
-    # 注: sed で ".*sec" は "usec" にもマッチするので awk で第4列を取る
-    boot=$(sysctl -n kern.boottime | awk '{print $4}' | tr -d ',')
-    now=$(date +%s)
-    days=$(( (now - boot) / 86400 ))
-    hours=$(( (now - boot) % 86400 / 3600 ))
+    # 生メトリクスの取得は lib/metrics.sh に集約（表示書式は本ファイルの責務）。
+    swap=$(metrics_swap_used_raw)
+    load=$(metrics_load_1m_raw)
+    days=$(metrics_uptime_days_now)
+    hours=$(metrics_uptime_hours_now)
     printf "  uptime         : %dd %dh\n" "$days" "$hours"
     printf "  load avg (1m)  : %s\n" "$load"
     printf "  swap used      : %s\n" "$swap"
     # 圧縮メモリ (GB)
-    comp_pages=$(vm_stat 2>/dev/null | awk '/Pages occupied by compressor/ {gsub("\\.",""); print $5}')
-    comp_gb=$(awk -v p="${comp_pages:-0}" 'BEGIN { printf "%.1f", p * 4096 / 1024 / 1024 / 1024 }')
+    comp_gb=$(metrics_compressed_gb)
     printf "  compressed mem : %sGB\n" "$comp_gb"
     # メモリ free %
-    free_pct=$(memory_pressure 2>/dev/null | awk -F': ' '/memory free percentage/ {gsub("%","",$2); print $2}')
+    free_pct=$(metrics_memory_free_pct)
     printf "  memory free    : %s%%\n" "${free_pct:-?}"
-    # Docker
-    if pgrep -f "com\.apple\.Virtualization\.VirtualMachine" >/dev/null 2>&1 \
-       || pgrep -xf "/Applications/Docker.app/Contents/MacOS/Docker Desktop.app/Contents/MacOS/Docker Desktop" >/dev/null 2>&1; then
-      # コンテナ数も取得（docker daemon が応答不能の場合は ? を表示）
-      ccount=$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')
+    # Docker（metrics_docker_status: "running\t<n>" / "stopped"）
+    docker_status=$(metrics_docker_status)
+    if [ "${docker_status%%	*}" = "running" ]; then
+      ccount="${docker_status#*	}"
       ccount=${ccount:-?}
       printf "  docker         : running (containers=%s)\n" "$ccount"
     else
