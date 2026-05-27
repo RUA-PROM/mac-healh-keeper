@@ -1,0 +1,191 @@
+#!/bin/bash
+# Mac Health Keeper - CLI
+#   使い方:
+#     mac-health status      現状サマリ
+#     mac-health logs [N]    直近N行のログ（既定50）
+#     mac-health events      ユーザー通知履歴
+#     mac-health enable      LaunchAgent を有効化
+#     mac-health disable     LaunchAgent を一時停止
+#     mac-health test        通知テスト
+#     mac-health run <job>   ジョブを今すぐ実行 (monitor|docker|uptime|refresh)
+#     mac-health uninstall   完全アンインストール
+
+set -u
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+source "$ROOT_DIR/lib/log.sh"
+source "$ROOT_DIR/lib/notify.sh"
+
+LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
+AGENTS=(
+  "com.github.adachi-tatsuru.machealth.monitor"
+  "com.github.adachi-tatsuru.machealth.docker"
+  "com.github.adachi-tatsuru.machealth.uptime"
+  "com.github.adachi-tatsuru.machealth.refresh"
+)
+
+cmd="${1:-status}"
+shift || true
+
+case "$cmd" in
+  status)
+    echo "=== Mac Health Keeper Status ==="
+    echo ""
+    echo "[LaunchAgents]"
+    for a in "${AGENTS[@]}"; do
+      plist="$LAUNCH_AGENT_DIR/$a.plist"
+      if [ -f "$plist" ]; then
+        if launchctl list 2>/dev/null | grep -q "$a"; then
+          printf "  ✅ %s (loaded)\n" "$a"
+        else
+          printf "  ⚠️  %s (unloaded)\n" "$a"
+        fi
+      else
+        printf "  ❌ %s (not installed)\n" "$a"
+      fi
+    done
+
+    echo ""
+    echo "[Current Metrics]"
+    swap=$(sysctl -n vm.swapusage 2>/dev/null | sed -E 's/.*used = ([0-9.]+M).*/\1/')
+    load=$(uptime | sed -E 's/.*load averages?:?[[:space:]]+([0-9.]+).*/\1/')
+    # boot_time パース: "{ sec = 1779856522, usec = ..." → 1779856522
+    # 注: sed で ".*sec" は "usec" にもマッチするので awk で第4列を取る
+    boot=$(sysctl -n kern.boottime | awk '{print $4}' | tr -d ',')
+    now=$(date +%s)
+    days=$(( (now - boot) / 86400 ))
+    hours=$(( (now - boot) % 86400 / 3600 ))
+    printf "  uptime         : %dd %dh\n" "$days" "$hours"
+    printf "  load avg (1m)  : %s\n" "$load"
+    printf "  swap used      : %s\n" "$swap"
+    # 圧縮メモリ (GB)
+    comp_pages=$(vm_stat 2>/dev/null | awk '/Pages occupied by compressor/ {gsub("\\.",""); print $5}')
+    comp_gb=$(awk -v p="${comp_pages:-0}" 'BEGIN { printf "%.1f", p * 4096 / 1024 / 1024 / 1024 }')
+    printf "  compressed mem : %sGB\n" "$comp_gb"
+    # メモリ free %
+    free_pct=$(memory_pressure 2>/dev/null | awk -F': ' '/memory free percentage/ {gsub("%","",$2); print $2}')
+    printf "  memory free    : %s%%\n" "${free_pct:-?}"
+    # Docker
+    if pgrep -f "com\.apple\.Virtualization\.VirtualMachine" >/dev/null 2>&1 \
+       || pgrep -xf "/Applications/Docker.app/Contents/MacOS/Docker Desktop.app/Contents/MacOS/Docker Desktop" >/dev/null 2>&1; then
+      # コンテナ数も取得（docker daemon が応答不能の場合は ? を表示）
+      ccount=$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')
+      ccount=${ccount:-?}
+      printf "  docker         : running (containers=%s)\n" "$ccount"
+    else
+      printf "  docker         : not running\n"
+    fi
+
+    echo ""
+    echo "[Recent Events]"
+    if [ -f "$LOG_DIR/events.log" ]; then
+      tail -5 "$LOG_DIR/events.log" | sed 's/^/  /'
+    else
+      echo "  (no events yet)"
+    fi
+    ;;
+
+  logs)
+    n="${1:-50}"
+    if [ -f "$LOG_DIR/monitor.log" ]; then
+      echo "=== monitor.log (last $n) ==="
+      tail -n "$n" "$LOG_DIR/monitor.log"
+    fi
+    if [ -f "$LOG_DIR/docker.log" ]; then
+      echo ""
+      echo "=== docker.log (last $n) ==="
+      tail -n "$n" "$LOG_DIR/docker.log"
+    fi
+    if [ -f "$LOG_DIR/refresh.log" ]; then
+      echo ""
+      echo "=== refresh.log (last $n) ==="
+      tail -n "$n" "$LOG_DIR/refresh.log"
+    fi
+    ;;
+
+  events)
+    if [ -f "$LOG_DIR/events.log" ]; then
+      tail -n 50 "$LOG_DIR/events.log"
+    else
+      echo "(no events yet)"
+    fi
+    ;;
+
+  enable)
+    for a in "${AGENTS[@]}"; do
+      plist="$LAUNCH_AGENT_DIR/$a.plist"
+      if [ -f "$plist" ]; then
+        launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || \
+          launchctl load "$plist" 2>/dev/null
+        echo "enabled: $a"
+      fi
+    done
+    ;;
+
+  disable)
+    for a in "${AGENTS[@]}"; do
+      plist="$LAUNCH_AGENT_DIR/$a.plist"
+      if [ -f "$plist" ]; then
+        launchctl bootout "gui/$(id -u)/$a" 2>/dev/null || \
+          launchctl unload "$plist" 2>/dev/null
+        echo "disabled: $a"
+      fi
+    done
+    ;;
+
+  test)
+    notify "🧪 Mac Health: Test" "通知が届けば OK" "test"
+    echo "テスト通知を送信しました（通知センターを確認）"
+    ;;
+
+  run)
+    job="${1:-}"
+    case "$job" in
+      monitor)  "$SCRIPT_DIR/monitor.sh" ;;
+      docker)   "$SCRIPT_DIR/check-docker.sh" ;;
+      uptime)   "$SCRIPT_DIR/check-uptime.sh" ;;
+      refresh)  "$SCRIPT_DIR/refresh.sh" ;;
+      *)
+        echo "Usage: mac-health run {monitor|docker|uptime|refresh}"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  uninstall)
+    echo "Mac Health Keeper をアンインストールします..."
+    for a in "${AGENTS[@]}"; do
+      plist="$LAUNCH_AGENT_DIR/$a.plist"
+      launchctl bootout "gui/$(id -u)/$a" 2>/dev/null || true
+      launchctl unload "$plist" 2>/dev/null || true
+      rm -f "$plist"
+      echo "  removed: $a"
+    done
+    rm -rf "$HOME/.local/bin/mac-health"
+    echo ""
+    echo "✅ アンインストール完了"
+    echo "  ログは $HOME/Library/Logs/MacHealth/ に残しています。"
+    echo "  完全に消す場合: rm -rf '$HOME/Library/Logs/MacHealth'"
+    ;;
+
+  *)
+    cat <<USAGE
+Mac Health Keeper — 再起動なしで再起動相当の状態を保つ
+
+使い方:
+  mac-health status         現状サマリ
+  mac-health logs [N]       直近の監視ログ（既定 50行）
+  mac-health events         通知履歴
+  mac-health enable         監視を有効化
+  mac-health disable        監視を一時停止
+  mac-health test           通知テスト
+  mac-health run <job>      ジョブを即実行 (monitor|docker|uptime|refresh)
+  mac-health uninstall      完全アンインストール
+
+ファイル:
+  bin/設定:  $ROOT_DIR
+  ログ:      $LOG_DIR
+  LaunchAgent: $LAUNCH_AGENT_DIR/com.github.adachi-tatsuru.machealth.*.plist
+USAGE
+    ;;
+esac

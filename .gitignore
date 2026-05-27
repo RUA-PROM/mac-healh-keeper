@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ビルド成果物
+src/MacHealth
+src/MacHealth.dSYM/
+*.o
+
+# ローカル設定の上書き
+scripts/config/thresholds.local.sh
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ログ（自分の環境のテスト時）
+*.log
