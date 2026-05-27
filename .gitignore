@@ -8,6 +8,9 @@ src/MacHealth
 src/MacHealth.dSYM/
 *.o
 
+# SwiftPM（テスト用ビルド成果物）
+.build/
+
 # ローカル設定の上書き
 scripts/config/thresholds.local.sh
 

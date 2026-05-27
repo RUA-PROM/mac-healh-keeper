@@ -77,7 +77,7 @@ mkdir -p "$LOG_DIR"
 echo ""
 echo "▶ Swift ビルド"
 cd "$INSTALL_DIR/src"
-swiftc MacHealth.swift -o MacHealth
+swiftc MacHealth.swift "$REPO_DIR/Sources/MacHealthKit/ScheduleTiming.swift" -o MacHealth
 echo "  ✅ ビルド完了 ($(ls -la MacHealth | awk '{print $5}') bytes)"
 
 echo ""
