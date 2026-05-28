@@ -20,6 +20,9 @@ source "$SCRIPT_DIR/notification_cooldown.sh"
 JOB="monitor"
 COOLDOWN_FILE="$LOG_DIR/.monitor-cooldown"
 
+# 全ジョブ共通の終了処理（ローテート）を確実に呼ぶ（02 §3.3。冪等・trap に一本化）。
+trap 'finalize_job "$JOB"' EXIT
+
 # クールダウン制御（should_notify）・閾値判定（exceeds_threshold / classify_pressure）は
 # notification_cooldown.sh に分離（テスト対象）。挙動・key:epoch 形式は不変。
 
@@ -86,5 +89,4 @@ if [ "$mem_pressure" = "critical" ]; then
   fi
 fi
 
-rotate_logs
 exit 0

@@ -9,9 +9,21 @@
 # 外部コマンド・実ファイル($LOG_DIR)・実通知には依存しない。
 # 分岐ロジック・key:epoch 形式・戻り値は monitor.sh 原文（L20-37 / L63-65 / L73-91）を維持する。
 
+# 排他制御（with_lock）。ガード付き source（テスト・再 source 安全）。
+# lock.sh 不在時は with_lock 未定義のままだが should_notify 側でフォールバックする。
+if ! command -v with_lock >/dev/null 2>&1; then
+  _NC_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$_NC_SH_DIR/../lib/lock.sh" ]; then
+    # shellcheck source=../lib/lock.sh
+    source "$_NC_SH_DIR/../lib/lock.sh"
+  fi
+fi
+
 # 直近通知からのクールダウン制御（monitor.sh L20-37 と同一挙動）
 #   入力: $1=key、環境変数 COOLDOWN_FILE / NOTIFICATION_COOLDOWN_MIN
 #   出力: 戻り値 1=非通知（未経過）、0=通知（経過）。0 のとき COOLDOWN_FILE を key:now で更新。
+#   D 差分: cooldown 更新（read-modify-write）区間のみ with_lock で直列化（判定・形式・戻り値は不変）。
+#   with_lock 不在時（lock.sh 未 source）はロックなしで従来動作にフォールバックする。
 should_notify() {
   local key="$1"
   local now
@@ -25,10 +37,21 @@ should_notify() {
   if [ $((now - last)) -lt "$cooldown" ]; then
     return 1
   fi
+  if command -v with_lock >/dev/null 2>&1; then
+    with_lock notify-cooldown _should_notify_update "$key" "$now"
+  else
+    _should_notify_update "$key" "$now"
+  fi
+  return 0
+}
+
+# cooldown ファイルの read-modify-write 本体（with_lock で直列化される区間）。
+# 原文の挙動（key:epoch 形式・tmp 経由の原子的 mv）を維持する。
+_should_notify_update() {
+  local key="$1" now="$2"
   grep -v "^$key:" "$COOLDOWN_FILE" 2>/dev/null > "$COOLDOWN_FILE.tmp" || true
   echo "$key:$now" >> "$COOLDOWN_FILE.tmp"
   mv "$COOLDOWN_FILE.tmp" "$COOLDOWN_FILE"
-  return 0
 }
 
 # 整数の閾値判定（monitor.sh L73/82/91 の `-ge` と同一）

@@ -11,6 +11,9 @@ source "$ROOT_DIR/config/thresholds.sh"
 
 JOB="uptime"
 
+# 全ジョブ共通の終了処理（ローテート）を確実に呼ぶ（02 §3.3。L2 是正）。
+trap 'finalize_job "$JOB"' EXIT
+
 # 起動からの経過秒数
 # 注: sed で ".*sec" は "usec" にもマッチするので awk で第4列を取る
 boot_time=$(sysctl -n kern.boottime | awk '{print $4}' | tr -d ',')

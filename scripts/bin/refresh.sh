@@ -12,6 +12,9 @@ source "$ROOT_DIR/lib/notify.sh"
 
 JOB="refresh"
 
+# 全ジョブ共通の終了処理（ローテート）を確実に呼ぶ（02 §3.3。冪等・trap に一本化）。
+trap 'finalize_job "$JOB"' EXIT
+
 # 対象アプリ（順序はメモリリークしやすい順）
 APPS=(
   "Slack"
@@ -113,5 +116,4 @@ log "$JOB" "=== AppRefresh done: refreshed=$refreshed skipped=$skipped ==="
 notify "🌙 Mac Health: AppRefresh 完了" "${refreshed} 個を再起動 / ${skipped} 個スキップ"
 log_event "$JOB" "INFO" "AppRefresh completed: refreshed=$refreshed skipped=$skipped"
 
-rotate_logs
 exit 0

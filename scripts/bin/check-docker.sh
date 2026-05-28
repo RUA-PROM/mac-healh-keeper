@@ -13,6 +13,10 @@ source "$ROOT_DIR/config/thresholds.sh"
 JOB="docker"
 STATE_FILE="$LOG_DIR/.docker-state"
 
+# 全ジョブ共通の終了処理（ローテート）を確実に呼ぶ（02 §3.3）。
+# 本スクリプトは複数の exit 0 を持つため、末尾呼び出しでは取りこぼす（L2 是正）→ trap EXIT で一本化。
+trap 'finalize_job "$JOB"' EXIT
+
 # Docker Desktop が起動しているか
 if ! pgrep -f "Docker Desktop.app/Contents/MacOS/Docker Desktop" > /dev/null 2>&1 \
    && ! pgrep -f "com.apple.Virtualization.VirtualMachine" > /dev/null 2>&1; then

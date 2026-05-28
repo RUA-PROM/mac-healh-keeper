@@ -14,3 +14,9 @@ UPTIME_WARN_DAYS=30
 
 # 通知の頻度制限（同じ警告は X 分以内に再送しない）
 NOTIFICATION_COOLDOWN_MIN=60
+
+# ログローテート設定（lib/log.sh が参照。未 source 時は log.sh 側の既定値でフォールバック）
+MHK_ROTATE_MAX_BYTES=5242880           # ローテート上限サイズ (5MB)。これ以上で世代退避
+MHK_ROTATE_KEEP_GENERATIONS=3          # 保持する世代数（.1〜.3、.4 以降は削除）
+MHK_ROTATE_EXTS="log out err"          # ローテート対象拡張子（スペース区切り）
+MHK_LOCK_TIMEOUT_SEC=5                 # ロック取得のリトライ上限秒

@@ -21,5 +21,5 @@ test-shell:
 		bats scripts/test/; \
 	else \
 		echo "    (bats not found -> fallback to self-made assert runner)"; \
-		bash scripts/test/monitor_test.sh && bash scripts/test/metrics_test.sh; \
+		bash scripts/test/monitor_test.sh && bash scripts/test/metrics_test.sh && bash scripts/test/log_rotate_test.sh; \
 	fi
