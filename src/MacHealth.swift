@@ -1,31 +1,15 @@
 // Mac Health Keeper - メニューバーアプリ
 // 再起動なしで再起動相当の状態を保つ自動メンテシステムの一元管理 UI
 //
-// ビルド: swiftc MacHealth.swift ../Sources/MacHealthKit/ScheduleTiming.swift -o MacHealth
-//   （純粋ロジックの ScheduleTiming を併せてコンパイルする複数ファイルビルド。install.sh も同様）
-//   ※ 旧 `swiftc MacHealth.swift` 単一ファイルビルドは、ScheduleTiming 参照のため不可。
+// ビルド: 複数ファイル（src/*.swift ＋ Sources/MacHealthKit/*.swift）を swiftc でコンパイルする。
+//   例: swiftc MacHealth.swift MetricsCollector.swift MenuBuilder.swift \
+//         ../Sources/MacHealthKit/*.swift -o MacHealth
+//   （Domain/Infra/UI の純粋部は Sources/MacHealthKit、AppKit/launchctl 依存部は src/。install.sh も同様。）
+//   ※ 単一ファイルビルドは分割した型の参照のため不可。
 
+// 注: swiftc ビルドでは src/*.swift と Sources/MacHealthKit/*.swift を 1 つのモジュールとして
+// まとめてコンパイルするため import MacHealthKit は不要（型は同一モジュール内で解決される）。
 import Cocoa
-
-// 各ジョブの状態スナップショット
-struct JobStatus {
-    var loaded: Bool = false
-    var lastRun: Date? = nil
-    var nextRun: Date? = nil
-}
-
-// メトリクスのスナップショット（キャッシュ用）
-struct MetricsSnapshot {
-    var uptimeDays: Int = 0
-    var uptimeHours: Int = 0
-    var loadAvg: String = "—"
-    var memoryFreePct: String = "—"
-    var compressedGB: String = "—"
-    var swapUsed: String = "—"
-    var dockerLine: String = "—"
-    var jobs: [String: JobStatus] = [:]
-    var lastUpdated: Date = .distantPast
-}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -40,32 +24,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var launchAgentDir: String { "\(homeDir)/Library/LaunchAgents" }
     var logDir: String { "\(homeDir)/Library/Logs/MacHealth" }
 
-    let jobs = ["monitor", "docker", "uptime", "refresh"]
+    // 各層の調整役として依存を保持する。
+    private let runner: ShellRunner = ZshShellRunner()
+    private let catalog = JobCatalog()
+    private let timing = ScheduleTiming()
+    private let menuModel = MenuModel()
+    private let menuBuilder = MenuBuilder()
+    private lazy var jobController = JobController(
+        runner: runner,
+        catalog: catalog,
+        uid: String(getuid()),
+        launchAgentDir: launchAgentDir,
+        cliPath: machealthCLI
+    )
+    private lazy var collector = MetricsCollector(
+        runner: runner,
+        parser: MetricsParser(),
+        catalog: catalog,
+        jobController: jobController,
+        timing: timing,
+        logDir: logDir
+    )
 
-    // ジョブの短い名前
-    let jobShortNames: [String: String] = [
-        "monitor": "メモリ／負荷監視",
-        "docker":  "Dockerアイドル監視",
-        "uptime":  "長期稼働の通知",
-        "refresh": "アプリ自動再起動"
-    ]
-
-    // 表示用の頻度
-    let jobFrequencies: [String: String] = [
-        "monitor": "5分毎",
-        "docker":  "10分毎",
-        "uptime":  "毎日 9:00",
-        "refresh": "毎日 3:00"
-    ]
-
-    // ジョブごとの実行スケジュール種別（インターバル系 or カレンダー系）
-    enum ScheduleKind { case interval(Int); case daily(Int, Int) }
-    let jobSchedules: [String: ScheduleKind] = [
-        "monitor": .interval(300),
-        "docker":  .interval(600),
-        "uptime":  .daily(9, 0),
-        "refresh": .daily(3, 0)
-    ]
+    /// 既存コマンド文字列をそのまま zsh -l -c で実行する（現 shell(_:) 互換）。
+    @discardableResult
+    private func shell(_ cmd: String) -> String {
+        return runner.run("/bin/zsh", ["-l", "-c", cmd])
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -104,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refreshMetricsAsync() {
         metricsQueue.async { [weak self] in
             guard let self = self else { return }
-            let snapshot = self.gatherMetrics()
+            let snapshot = self.collector.collect()
             DispatchQueue.main.async {
                 self.cache = snapshot
                 self.rebuildMenu()
@@ -112,255 +97,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func gatherMetrics() -> MetricsSnapshot {
-        // 丸め・単位は scripts/lib/metrics.sh（02 §3.1.3）と一致させること。将来 (a) で metrics.sh へ統合。
-        var s = MetricsSnapshot()
-
-        let load = shell("uptime | sed -E 's/.*load averages?:?[[:space:]]+([0-9.]+).*/\\1/'")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        s.loadAvg = load.isEmpty ? "—" : load
-
-        let swap = shell("sysctl -n vm.swapusage | sed -E 's/.*used = ([0-9.]+M).*/\\1/'")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        s.swapUsed = swap.isEmpty ? "—" : swap
-
-        let memFree = shell("memory_pressure 2>/dev/null | awk -F': ' '/memory free percentage/ {gsub(\"%\",\"\",$2); print $2}'")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        s.memoryFreePct = memFree.isEmpty ? "—" : memFree
-
-        let bootStr = shell("sysctl -n kern.boottime | awk '{print $4}' | tr -d ','")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let now = Int(Date().timeIntervalSince1970)
-        let boot = Int(bootStr) ?? now
-        let elapsed = now - boot
-        s.uptimeDays = elapsed / 86400
-        s.uptimeHours = (elapsed % 86400) / 3600
-
-        let compPagesStr = shell("vm_stat | awk '/Pages occupied by compressor/ {gsub(\"\\\\.\",\"\"); print $5}'")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let compPages = Double(compPagesStr) ?? 0
-        let compGB = compPages * 4096 / 1024 / 1024 / 1024
-        s.compressedGB = String(format: "%.1f GB", compGB)
-
-        let dockerRunning = shell("pgrep -f 'com\\.apple\\.Virtualization\\.VirtualMachine' >/dev/null && echo 1 || echo 0")
-            .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
-        if dockerRunning {
-            let count = shell("(docker ps -q 2>/dev/null | wc -l | tr -d ' ') & p=$!; (sleep 3; kill -9 $p 2>/dev/null) >/dev/null 2>&1 & wait $p 2>/dev/null")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            s.dockerLine = "Docker:         起動中（コンテナ: \(count.isEmpty ? "?" : count)）"
-        } else {
-            s.dockerLine = "Docker:         停止中"
-        }
-
-        // 各ジョブの情報を収集
-        for job in jobs {
-            var status = JobStatus()
-            let label = "com.github.adachi-tatsuru.machealth.\(job)"
-            let out = shell("launchctl list 2>/dev/null | grep '\(label)'")
-            status.loaded = !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
-            // ログファイルの mtime を「最終実行」として使う
-            let logPath = "\(logDir)/\(job).log"
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
-               let mtime = attrs[.modificationDate] as? Date {
-                status.lastRun = mtime
-            }
-
-            // 次回実行時刻
-            if let schedule = jobSchedules[job] {
-                switch schedule {
-                case .interval(let sec):
-                    // インターバル系: 最終実行 + sec が次回（近似）
-                    if let last = status.lastRun {
-                        status.nextRun = last.addingTimeInterval(TimeInterval(sec))
-                    }
-                case .daily(let h, let m):
-                    status.nextRun = nextDailyRun(hour: h, minute: m)
-                }
-            }
-
-            s.jobs[job] = status
-        }
-
-        s.lastUpdated = Date()
-        return s
-    }
-
-    // 純粋ロジックは ScheduleTiming に集約（テスト対象）。以下は内部委譲する薄いラッパ。
-    private let timing = ScheduleTiming()
-
-    func nextDailyRun(hour: Int, minute: Int) -> Date {
-        return timing.nextDailyRun(hour: hour, minute: minute, now: Date(), calendar: Calendar.current)
-    }
-
-    // MARK: - Time formatting
-
-    /// 「2分前」「3時間前」「2日前」など
-    func relativeTimeShort(_ date: Date) -> String {
-        return timing.relativeTimeShort(date, now: Date())
-    }
-
-    /// 「5分以内」「今日 09:00」「明日 03:00」「12/25 09:00」
-    func relativeNext(_ date: Date, intervalSec: Int? = nil) -> String {
-        return timing.relativeNext(date, intervalSec: intervalSec, now: Date(), calendar: Calendar.current)
-    }
-
     // MARK: - Menu
 
     func rebuildMenu() {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-
-        let title = NSMenuItem(title: "Mac Health Keeper", action: nil, keyEquivalent: "")
-        title.isEnabled = false
-        menu.addItem(title)
-        menu.addItem(.separator())
-
-        // 現状メトリクス
-        let metricLines = [
-            "稼働時間:       \(cache.uptimeDays)日 \(cache.uptimeHours)時間",
-            "負荷平均(1分):  \(cache.loadAvg)",
-            "空きメモリ:     \(cache.memoryFreePct)%",
-            "圧縮メモリ:     \(cache.compressedGB)",
-            "スワップ使用:   \(cache.swapUsed)",
-            cache.dockerLine
-        ]
-        for line in metricLines {
-            let item = NSMenuItem(title: "  " + line, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        if cache.lastUpdated != .distantPast {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "HH:mm:ss"
-            let lu = NSMenuItem(title: "  最終更新: \(fmt.string(from: cache.lastUpdated))  (⌘R で更新)", action: #selector(refreshNow), keyEquivalent: "r")
-            lu.target = self
-            menu.addItem(lu)
-        } else {
-            let lu = NSMenuItem(title: "  取得中…", action: nil, keyEquivalent: "")
-            lu.isEnabled = false
-            menu.addItem(lu)
-        }
-        menu.addItem(.separator())
-
-        // クイック対処
-        let quickHeader = NSMenuItem(title: "クイック対処", action: nil, keyEquivalent: "")
-        quickHeader.isEnabled = false
-        menu.addItem(quickHeader)
-
-        let quickRefreshApps = NSMenuItem(title: "🌀 重いアプリを今すぐリフレッシュ", action: #selector(quickAppRefresh), keyEquivalent: "")
-        quickRefreshApps.target = self
-        menu.addItem(quickRefreshApps)
-
-        let quickPurge = NSMenuItem(title: "🧹 ファイルキャッシュ解放 (sudo purge)", action: #selector(quickPurge), keyEquivalent: "")
-        quickPurge.target = self
-        menu.addItem(quickPurge)
-
-        let quickPressure = NSMenuItem(title: "📉 メモリ圧迫テスト (解放を促す)", action: #selector(quickMemoryPressure), keyEquivalent: "")
-        quickPressure.target = self
-        menu.addItem(quickPressure)
-
-        let quickDockerQuit = NSMenuItem(title: "🐳 Docker Desktop を Quit", action: #selector(quickDockerQuit), keyEquivalent: "")
-        quickDockerQuit.target = self
-        menu.addItem(quickDockerQuit)
-        menu.addItem(.separator())
-
-        // ジョブ一覧（新表示）
-        let jobsHeader = NSMenuItem(title: "ジョブ（クリックで ON/OFF を切替）", action: nil, keyEquivalent: "")
-        jobsHeader.isEnabled = false
-        menu.addItem(jobsHeader)
-
-        for job in jobs {
-            let status = cache.jobs[job] ?? JobStatus()
-            let icon = status.loaded ? "🟢" : "⚪"
-            let name = jobShortNames[job] ?? job
-            let freq = jobFrequencies[job] ?? ""
-
-            // 詳細部分: 「最終 X分前」or「次回 X」
-            var extras: [String] = [freq]
-            if let schedule = jobSchedules[job] {
-                switch schedule {
-                case .interval(let sec):
-                    // インターバル系: 最終実行を表示
-                    if let last = status.lastRun {
-                        extras.append("最終 \(relativeTimeShort(last))")
-                    } else if status.loaded {
-                        extras.append("未実行")
-                    }
-                    // OFF だと次回も無いのでスキップ
-                    _ = sec
-                case .daily(_, _):
-                    // カレンダー系: 次回実行を表示
-                    if status.loaded, let next = status.nextRun {
-                        extras.append("次回 \(relativeNext(next))")
-                    }
-                }
-            }
-
-            let extra = extras.joined(separator: " ・ ")
-            let item = NSMenuItem(title: "\(icon)  \(name)    \(extra)", action: #selector(toggleJob(_:)), keyEquivalent: "")
-            item.representedObject = job
-            item.target = self
-            // ツールチップに詳細
-            var tipParts: [String] = ["ラベル: com.github.adachi-tatsuru.machealth.\(job)"]
-            if let last = status.lastRun {
-                let fmt = DateFormatter()
-                fmt.dateFormat = "yyyy/MM/dd HH:mm:ss"
-                tipParts.append("最終実行: \(fmt.string(from: last))")
-            }
-            if status.loaded, let next = status.nextRun {
-                let fmt = DateFormatter()
-                fmt.dateFormat = "yyyy/MM/dd HH:mm"
-                tipParts.append("次回実行: \(fmt.string(from: next))")
-            }
-            item.toptip(tipParts.joined(separator: "\n"))
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-
-        // 即実行
-        let runHeader = NSMenuItem(title: "今すぐ実行", action: nil, keyEquivalent: "")
-        runHeader.isEnabled = false
-        menu.addItem(runHeader)
-        for job in jobs {
-            let label = "  ▶ " + (jobShortNames[job] ?? job)
-            let item = NSMenuItem(title: label, action: #selector(runJob(_:)), keyEquivalent: "")
-            item.representedObject = job
-            item.target = self
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-
-        // ログ・通知テスト
-        let openEvents = NSMenuItem(title: "通知履歴を開く", action: #selector(openEventsLog), keyEquivalent: "e")
-        openEvents.target = self
-        menu.addItem(openEvents)
-        let openMonitor = NSMenuItem(title: "監視ログを開く", action: #selector(openMonitorLog), keyEquivalent: "m")
-        openMonitor.target = self
-        menu.addItem(openMonitor)
-        let testNotif = NSMenuItem(title: "通知テスト", action: #selector(testNotification), keyEquivalent: "t")
-        testNotif.target = self
-        menu.addItem(testNotif)
-        menu.addItem(.separator())
-
-        let pauseAll = NSMenuItem(title: "全ジョブを停止", action: #selector(pauseAllJobs), keyEquivalent: "")
-        pauseAll.target = self
-        menu.addItem(pauseAll)
-        let resumeAll = NSMenuItem(title: "全ジョブを再開", action: #selector(resumeAllJobs), keyEquivalent: "")
-        resumeAll.target = self
-        menu.addItem(resumeAll)
-        menu.addItem(.separator())
-
-        let helpItem = NSMenuItem(title: "📚 各指標の意味…", action: #selector(showMetricsHelp), keyEquivalent: "")
-        helpItem.target = self
-        menu.addItem(helpItem)
-
-        let about = NSMenuItem(title: "このアプリについて…", action: #selector(showAbout), keyEquivalent: "")
-        about.target = self
-        menu.addItem(about)
-        let quit = NSMenuItem(title: "Mac Health を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
-
+        let specs = menuModel.build(snapshot: cache, catalog: catalog, timing: timing, now: Date())
+        let menu = menuBuilder.makeMenu(specs, target: self)
         statusItem.menu = menu
     }
 
@@ -418,9 +159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleJob(_ sender: NSMenuItem) {
         guard let job = sender.representedObject as? String else { return }
-        let label = "com.github.adachi-tatsuru.machealth.\(job)"
-        let plist = "\(launchAgentDir)/\(label).plist"
-        let uid = String(getuid())
         let wasLoaded = cache.jobs[job]?.loaded ?? false
 
         // オプティミスティック更新
@@ -429,16 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let result: String
-            if wasLoaded {
-                result = self.shell("launchctl bootout gui/\(uid)/\(label) 2>&1 || launchctl unload '\(plist)' 2>&1")
-            } else {
-                result = self.shell("launchctl bootstrap gui/\(uid) '\(plist)' 2>&1 || launchctl load '\(plist)' 2>&1")
-            }
+            let result = self.jobController.toggle(job: job, wasLoaded: wasLoaded)
 
             Thread.sleep(forTimeInterval: 0.7)
-            let actualLoaded = !self.shell("launchctl list 2>/dev/null | grep '\(label)'")
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let actualLoaded = self.jobController.isLoaded(job: job)
 
             DispatchQueue.main.async {
                 self.cache.jobs[job]?.loaded = actualLoaded
@@ -450,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let hint = trimmed.isEmpty ? "" : "\n\n\(trimmed)"
                     let alert = NSAlert()
                     alert.messageText = "ジョブの\(action)に失敗しました"
-                    alert.informativeText = "「\(self.jobShortNames[job] ?? job)」の\(action)を試みましたが、状態が変わりませんでした。\(hint)"
+                    alert.informativeText = "「\(self.catalog.shortNames[job] ?? job)」の\(action)を試みましたが、状態が変わりませんでした。\(hint)"
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "OK")
                     NSApp.activate(ignoringOtherApps: true)
@@ -471,13 +203,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pauseAllJobs() {
-        for job in jobs {
+        for job in catalog.jobs {
             if cache.jobs[job] == nil { cache.jobs[job] = JobStatus() }
             cache.jobs[job]?.loaded = false
         }
         rebuildMenu()
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = self.shell("'\(self.machealthCLI)' disable")
+            _ = self.jobController.disableAll()
             Thread.sleep(forTimeInterval: 0.7)
             DispatchQueue.main.async {
                 self.refreshMetricsAsync()
@@ -486,13 +218,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func resumeAllJobs() {
-        for job in jobs {
+        for job in catalog.jobs {
             if cache.jobs[job] == nil { cache.jobs[job] = JobStatus() }
             cache.jobs[job]?.loaded = true
         }
         rebuildMenu()
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = self.shell("'\(self.machealthCLI)' enable")
+            _ = self.jobController.enableAll()
             Thread.sleep(forTimeInterval: 0.7)
             DispatchQueue.main.async {
                 self.refreshMetricsAsync()
@@ -591,38 +323,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func notify(_ message: String) {
         _ = shell("osascript -e 'display notification \"\(message.replacingOccurrences(of: "\"", with: "\\\""))\" with title \"Mac Health\"'")
     }
-
-    // MARK: - Shell
-
-    @discardableResult
-    func shell(_ cmd: String) -> String {
-        let task = Process()
-        task.launchPath = "/bin/zsh"
-        task.arguments = ["-l", "-c", cmd]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            return ""
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
-    }
-}
-
-// NSMenuItem にツールチップヘルパ
-extension NSMenuItem {
-    func toptip(_ text: String) {
-        self.toolTip = text
-    }
 }
 
 // エントリポイント。
-// ScheduleTiming.swift を併せてコンパイルするため複数ファイルビルドとなり、
-// トップレベルコードが使えない。挙動を変えずに @main で同等の起動処理を行う。
+// 複数ファイルビルドのためトップレベルコードが使えない。挙動を変えずに @main で同等の起動処理を行う。
 @main
 struct MacHealthMain {
     static func main() {

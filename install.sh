@@ -77,7 +77,15 @@ mkdir -p "$LOG_DIR"
 echo ""
 echo "▶ Swift ビルド"
 cd "$INSTALL_DIR/src"
-swiftc MacHealth.swift "$REPO_DIR/Sources/MacHealthKit/ScheduleTiming.swift" -o MacHealth
+swiftc MacHealth.swift MetricsCollector.swift MenuBuilder.swift \
+  "$REPO_DIR/Sources/MacHealthKit/ScheduleTiming.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/Metrics.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/JobCatalog.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/MetricsParser.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/MenuModel.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/ShellRunner.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/JobController.swift" \
+  -o MacHealth
 echo "  ✅ ビルド完了 ($(ls -la MacHealth | awk '{print $5}') bytes)"
 
 echo ""
