@@ -1,0 +1,3 @@
+# このディレクトリはシステム仕様書（docs/）のレビュー結果を格納します。
+# レビュー実施時に YYYYMMDD_HHMMSS_review.md を追加してください（.agents/DOCS_RULES.md）。
+# テンプレート: .workflow/templates/docs/00_review/YYYYMMDD_HHMMSS_review.md
