@@ -29,6 +29,8 @@ Mac Health Keeper は **個人マシン向けのローカル常駐ツール** �
 | **対象アプリ（refresh.sh）** | Slack / Chatwork / Google Chrome / Firefox / Claude。AppRefresh で順次 `quit saving no` → 完全 quit 待機 → `open -a` 再起動。Cursor は除外（編集中ファイル保護）。 | `scripts/bin/refresh.sh`（`APPS` 配列） |
 | **`memory_pressure` / `sudo purge` / `osascript` / `sysctl` / `vm_stat` / `uptime`** | クイック対処・メトリクス取得・通知に使う macOS 標準コマンド。 | `src/MacHealth.swift`・`src/MetricsCollector.swift`・`scripts/lib/metrics.sh`・`scripts/lib/notify.sh` |
 | **System Events（AppleScript）** | `install.sh` がログイン項目登録に使用、`refresh.sh` がアプリ起動判定に使用。 | `install.sh`・`scripts/bin/refresh.sh::is_running` |
+| **GitHub Actions（macos-latest / ubuntu-latest）** | 開発フロー側の外部実行系。PR / `main` push 時に `make check` を実行し、`main` マージ時に JST 日時タグ + GitHub Release を自動作成。 | `.github/workflows/check.yml`・`.github/workflows/create-release.yaml`・[04 機能設計 / CI・Release 自動化](../../04_機能設計/CI・Release自動化/README.md) |
+| **Homebrew（任意）** | CI 上で `shellcheck` 不在時に `brew install shellcheck` でフォールバック。ローカルでは任意ツール（`shfmt` / `swift-format` / `swiftlint`）の導入手段。 | `.github/workflows/check.yml`・[`README.md` § 任意ツールの導入](../../../README.md) |
 
 ## 2.3. 役割一覧（AI エージェント）
 
@@ -78,6 +80,7 @@ flowchart LR
 - [04 ディレクトリ構成](../04_ディレクトリ構成/README.md) で各ファイルの責務と所在を確認する。
 - [03 データ設計](../../03_データ設計/README.md) で値型（`MetricsSnapshot` / `JobStatus` / `MenuItemSpec` / `MenuAction` / `ScheduleKind`）と外部データ形式（cooldown ファイル・events.log・各 .log・rotate.err・launchd.\*.out/.err・plist スキーマ・ロックファイル）を確認する。
 - [04 機能設計](../../04_機能設計/README.md) で各機能の処理フローを参照し、変更時の影響範囲を判断する。
+- ローカルでの品質ゲートは [`make check`](../../04_機能設計/ローカル検証/README.md)。PR 時の CI / Release 自動化は [04 機能設計 / CI・Release 自動化](../../04_機能設計/CI・Release自動化/README.md)。
 - 命名・ID 規則は [99 ID 命名規則と管理](../../99_ID命名規則と管理/README.md) と `.agents/spec/03_命名規則.md`。
 
 ### AI エージェント

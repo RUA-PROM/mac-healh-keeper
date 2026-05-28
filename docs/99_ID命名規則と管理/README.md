@@ -55,6 +55,8 @@ document_id: "498FC4EC-EDE1-407E-A9D0-9B50C6BE0355"
 | F006 | 通知（注入耐性付き） | argv 渡し + cooldown | [04 機能設計 / 通知](../04_機能設計/通知/README.md) |
 | F007 | ログ・ローテーション | `log.sh` + `lock.sh` | [04 機能設計 / ログとローテーション](../04_機能設計/ログとローテーション/README.md) |
 | F008 | LaunchAgent 配備 | `install.sh` / `uninstall.sh` | [04 機能設計 / LaunchAgent配備](../04_機能設計/LaunchAgent配備/README.md) |
+| F009 | ローカル検証 | `make check` 集約・`scripts/lint/` ランナー群 | [04 機能設計 / ローカル検証](../04_機能設計/ローカル検証/README.md) |
+| F010 | CI・Release 自動化 | `.github/workflows/{check.yml, create-release.yaml}` | [04 機能設計 / CI・Release自動化](../04_機能設計/CI・Release自動化/README.md) |
 
 ---
 
@@ -77,6 +79,10 @@ document_id: "498FC4EC-EDE1-407E-A9D0-9B50C6BE0355"
 | F007-S2 | cooldown 更新 | [04 機能設計 / ログとローテーション](../04_機能設計/ログとローテーション/README.md#f007-s2-cooldown-更新read-modify-write) |
 | F008-S1 | install.sh フロー | [04 機能設計 / LaunchAgent配備](../04_機能設計/LaunchAgent配備/README.md#installsh-の処理フロー) |
 | F008-S2 | uninstall.sh フロー | [04 機能設計 / LaunchAgent配備](../04_機能設計/LaunchAgent配備/README.md#uninstallsh-の処理フロー) |
+| F009-S1 | `make check` の処理フロー | [04 機能設計 / ローカル検証](../04_機能設計/ローカル検証/README.md#f009-s1-make-check-の処理フロー) |
+| F009-S2 | 各ランナーの I/F | [04 機能設計 / ローカル検証](../04_機能設計/ローカル検証/README.md#f009-s2-各ランナーの-if) |
+| F010-S1 | CI（check.yml）の処理フロー | [04 機能設計 / CI・Release自動化](../04_機能設計/CI・Release自動化/README.md#f010-s1-cicheckyml-の処理フロー) |
+| F010-S2 | Release 自動化（create-release.yaml）の処理フロー | [04 機能設計 / CI・Release自動化](../04_機能設計/CI・Release自動化/README.md#f010-s2-release-自動化create-releaseyaml-の処理フロー) |
 
 ---
 

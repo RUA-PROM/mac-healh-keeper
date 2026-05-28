@@ -40,14 +40,17 @@ mac-health-keeper/
 │   ├── bin/                   # 実行スクリプト・CLI（launchd 起動対象）
 │   ├── lib/                   # 共通ユーティリティ（log/notify/metrics/lock）
 │   ├── config/                # 編集可能な設定値（thresholds.sh）
-│   └── test/                  # シェルのテスト（bats / *_test.sh）
+│   ├── test/                  # シェルのテスト（bats / *_test.sh）
+│   └── lint/                  # lint/format/cycle/security ランナー（make check から呼ぶ）
 ├── launchagents/              # launchd ジョブ定義テンプレート（*.plist.template）
+├── .github/
+│   └── workflows/             # GitHub Actions（check.yml / create-release.yaml）
 ├── docs/                      # システム仕様書（本ドキュメント群）
 ├── .agents/                   # 実行契約・規約（汎用テンプレート）
 ├── .agents-project/           # プロジェクト固有ルール（.agents より優先）
 ├── .workflow/                 # ワークフロー成果物（00〜04・issue・workflow.db）
 ├── Package.swift              # SwiftPM 構成
-├── Makefile                   # ビルド・テスト
+├── Makefile                   # ビルド・テスト・make check（lint/cycle/security/test 集約）
 ├── install.sh / uninstall.sh  # 配布 / 撤去
 ├── README.md / LICENSE        # プロジェクト README・ライセンス
 └── AGENTS.md / CLAUDE.md      # エージェント向け規約の入口
@@ -64,7 +67,9 @@ mac-health-keeper/
 | `scripts/lib/` | 共通ユーティリティ（log・notify・metrics・lock）。Functional Core / Imperative Shell。 |
 | `scripts/config/` | 編集可能な設定値（`thresholds.sh`）。 |
 | `scripts/test/` | シェルのテスト（bats / `*_test.sh`）。 |
+| `scripts/lint/` | lint・format 差分検査・シェル `source` 循環検出・セキュリティ静的 grep のランナー群（`make check` から呼ぶ）。 |
 | `launchagents/` | launchd ジョブ定義テンプレート（`*.plist.template`）。 |
+| `.github/workflows/` | GitHub Actions ワークフロー（`check.yml` で `make check`、`create-release.yaml` で `main` マージ時に JST 日時タグ + Release）。 |
 | `docs/` | システム仕様書（本 issue の成果物）。 |
 | `.agents/` | 実行契約・規約（汎用テンプレート）。 |
 | `.agents-project/` | プロジェクト固有ルール（`.agents` より優先）。 |
@@ -104,6 +109,13 @@ mac-health-keeper/
 | `scripts/lib/lock.sh` | ローテート等の排他制御（多重実行の競合防止）。 |
 | `scripts/config/thresholds.sh` | 閾値・ローテート世代数・クールダウン等の編集可能な設定値。 |
 | `scripts/test/*` | シェルのテスト（`*.bats` / `*_test.sh`）。`make test-shell` で実行。 |
+| `scripts/lint/lib/common.sh` | lint/security 共通関数（ログ出力・ツール検出・対象ファイル列挙・リポジトリルート解決）。bash 3.2 互換・GNU 拡張禁止。 |
+| `scripts/lint/run-shellcheck.sh` | shellcheck 実行（必須ツール・`-x --severity=warning`）。`make lint-shell` で呼ぶ。 |
+| `scripts/lint/run-shfmt.sh` | shfmt 差分検査（任意・未導入なら SKIP）。`make lint-shfmt` で呼ぶ。 |
+| `scripts/lint/run-swift-format.sh` | swift-format lint（任意・`--strict`）。`make lint-swift-format` で呼ぶ。 |
+| `scripts/lint/run-swiftlint.sh` | swiftlint（任意・`--strict`）。`make lint-swiftlint` で呼ぶ。 |
+| `scripts/lint/check-source-cycles.sh` | シェル `source` 依存グラフの循環検出（awk DFS、bash 3.2 互換）。`make check-cycles` で呼ぶ。 |
+| `scripts/lint/security-scan.sh` | 秘密情報・危険パターン（AWS Key / password / token / eval / `rm -rf $...` / `curl ... \| sh`）の静的検出。`make security-scan` で呼ぶ。 |
 
 ---
 
@@ -114,8 +126,10 @@ mac-health-keeper/
 | `launchagents/com.github.adachi-tatsuru.machealth.<job>.plist.template` | 各ジョブの launchd 定義テンプレート（`{{HOME}}` プレースホルダ）。`<job>` は monitor / docker / uptime / refresh。 |
 | `install.sh` | スクリプト・LaunchAgents の配置と登録（`{{HOME}}` を実環境に展開）。 |
 | `uninstall.sh` | 配置物の撤去・LaunchAgents の解除。 |
-| `Makefile` | ビルド・テスト（Swift / シェル）のエントリポイント。 |
+| `Makefile` | ビルド・テスト（Swift / シェル）と検証集約（`make check` = lint-shell / lint-shfmt / lint-swift-format / lint-swiftlint / check-cycles / security-scan / test）のエントリポイント。 |
 | `Package.swift` | SwiftPM のパッケージ定義（MacHealthKit ターゲット・テストターゲット）。 |
+| `.github/workflows/check.yml` | PR / `main` push 時に `macos-latest` で `make check` を実行する CI。`shellcheck` 不在時は Homebrew で導入してフォールバック。 |
+| `.github/workflows/create-release.yaml` | `main` push 時に `ubuntu-latest` 上で JST 日時タグ（例 `v20260528.143000`）を打ち、`gh release create --generate-notes` で Release を自動作成。 |
 
 ---
 
@@ -187,10 +201,18 @@ mac-health-keeper/
 │   │   └── lock.sh                                     #   acquire_lock / release_lock / with_lock（mkdir ベース）
 │   ├── config/
 │   │   └── thresholds.sh                               #   閾値・ローテート・cooldown の編集可能設定
-│   └── test/
-│       ├── log_rotate.bats / log_rotate_test.sh        #   needs_rotation / next_generation / rotate_file
-│       ├── metrics.bats   / metrics_test.sh            #   metrics_parse_* / metrics_uptime_*
-│       └── monitor.bats   / monitor_test.sh            #   should_notify / classify_pressure / exceeds_threshold
+│   ├── test/
+│   │   ├── log_rotate.bats / log_rotate_test.sh        #   needs_rotation / next_generation / rotate_file
+│   │   ├── metrics.bats   / metrics_test.sh            #   metrics_parse_* / metrics_uptime_*
+│   │   └── monitor.bats   / monitor_test.sh            #   should_notify / classify_pressure / exceeds_threshold
+│   └── lint/                                           # lint/format/cycle/security ランナー（make check から呼ぶ）
+│       ├── lib/common.sh                               #   ログ出力・ツール検出・対象ファイル列挙・リポジトリルート解決（bash 3.2 互換）
+│       ├── run-shellcheck.sh                           #   shellcheck 実行（必須・-x --severity=warning）
+│       ├── run-shfmt.sh                                #   shfmt 差分検査（任意・未導入なら SKIP）
+│       ├── run-swift-format.sh                         #   swift-format lint --strict（任意・未導入なら SKIP）
+│       ├── run-swiftlint.sh                            #   swiftlint --strict（任意・未導入なら SKIP）
+│       ├── check-source-cycles.sh                      #   シェル source 依存グラフの循環検出（awk DFS）
+│       └── security-scan.sh                            #   AWS Key / password / token / eval / rm -rf $... / curl|sh を grep -E で検出
 ├── launchagents/                                       # launchd ジョブ定義テンプレート（{{HOME}} プレースホルダ）
 │   ├── com.github.adachi-tatsuru.machealth.monitor.plist.template   # StartInterval=300 / RunAtLoad=true
 │   ├── com.github.adachi-tatsuru.machealth.docker.plist.template    # StartInterval=600 / RunAtLoad=false
@@ -202,14 +224,18 @@ mac-health-keeper/
 │   ├── 01_システム概要/{README.md,01_プロジェクト概要/,02_ステークホルダー/,03_アーキテクチャ/,04_ディレクトリ構成/}
 │   ├── 02_画面設計/README.md
 │   ├── 03_データ設計/README.md
-│   ├── 04_機能設計/{README.md,メニューバー表示/,メトリクス収集/,...}
+│   ├── 04_機能設計/{README.md,メニューバー表示/,メトリクス収集/,...,ローカル検証/,CI・Release自動化/}
 │   ├── 05_エラー処理と外部通知/README.md
 │   └── 99_ID命名規則と管理/README.md
+├── .github/                                            # GitHub Actions（CI / Release 自動化）
+│   └── workflows/
+│       ├── check.yml                                   #   PR / main push 時に macos-latest で make check
+│       └── create-release.yaml                         #   main push 時に JST 日時タグ + gh release --generate-notes
 ├── .agents/                                            # 実行契約・規約（汎用テンプレート）
 ├── .agents-project/                                    # プロジェクト固有ルール（.agents より優先）
 ├── .workflow/                                          # ワークフロー成果物（issue・00〜04・templates・workflow.db）
 ├── Package.swift                                       # SwiftPM（テスト用 library + test target）
-├── Makefile                                            # make test / test-swift / test-shell の集約
+├── Makefile                                            # make test / test-swift / test-shell / make check（lint・cycle・security 集約）
 ├── install.sh                                          # 配布（コピー + swiftc + .app 組立 + bootstrap + login item）
 ├── uninstall.sh                                        # 撤去（bootout + アプリ削除 + login item 削除 + 任意でログ削除）
 ├── README.md                                           # プロジェクト README
@@ -278,6 +304,22 @@ mac-health-keeper/
 | `metrics.bats` / `metrics_test.sh` | `metrics_parse_*` / `metrics_uptime_*` の純粋ロジック検証。 |
 | `log_rotate.bats` / `log_rotate_test.sh` | `needs_rotation` / `next_generation` / `rotate_file` の検証。 |
 
+### 4.8.6a. `scripts/lint/`（lint・format・cycle・security ランナー）
+
+`make check` から呼ばれる検証ランナー群。すべて `bash 3.2 互換`・GNU 拡張禁止。共通関数は `lib/common.sh` に集約し、各ランナーは `source` して使う。
+
+| ファイル | 責務 | 主要シンボル / 挙動 |
+| -------- | ---- | ------------------- |
+| `scripts/lint/lib/common.sh` | ログ出力（`log_info` / `log_warn` / `log_skip` / `log_error`）・ツール検出（`tool_available` / `require_tool`）・リポジトリルート解決（`repo_root`）・対象ファイル列挙（`list_shell_files` / `list_swift_files`）。 | `list_shell_files`: `scripts/{bin,lib,config,test}/*.sh` + `scripts/bin/mac-health`（拡張子なし CLI）+ `install.sh` / `uninstall.sh`。`list_swift_files`: `Sources/**/*.swift` + `Tests/**/*.swift`。 |
+| `scripts/lint/run-shellcheck.sh` | shellcheck を `list_shell_files` に適用。**必須ツール扱い**。 | 不在なら強い WARN を出して `exit 1`。実行は `shellcheck -x --severity=warning` で、`SC1091`（動的 `source` の未解決）を info に留めノイズを抑える。 |
+| `scripts/lint/run-shfmt.sh` | shfmt によるシェル整形差分検査。任意ツール。 | 不在なら SKIP（`exit 0`）。実行は `shfmt -d -i 4 -ci`（4 スペース・case インデント）。 |
+| `scripts/lint/run-swift-format.sh` | swift-format による Swift lint。任意ツール。 | 不在なら SKIP。実行は `swift-format lint --strict <list_swift_files>`。 |
+| `scripts/lint/run-swiftlint.sh` | swiftlint による Swift lint。任意ツール。 | 不在なら SKIP。実行は `cd repo_root && swiftlint --strict`。 |
+| `scripts/lint/check-source-cycles.sh` | シェル `source` 依存グラフの循環検出（**bash 3.2 互換 / GNU 拡張禁止**のため awk DFS）。 | `^[[:space:]]*(source\|\.)[[:space:]]+<path>` を抽出して `$ROOT_DIR=scripts`・`$SCRIPT_DIR=<file の dir>` で置換し正規化 → エッジ集合を `from<TAB>to` で生成 → awk で DFS して `color[]` で gray / black 管理 → 循環を `CYCLE: a -> b -> ... -> a` 形式で出力し非 0 終了。 |
+| `scripts/lint/security-scan.sh` | 秘密情報・危険パターンの静的検出。 | `grep -nHE` を `aws-access-key` / `password-literal` / `token-literal` / `eval-usage` / `rm-rf-var`（unquoted）/ `curl-pipe-sh`（`(curl\|wget) ... \| sh`）の 6 種パターンに対して順次実行。末尾コメント `# noqa: security` または `// noqa: security` は除外。自身（`security-scan.sh`・`check-source-cycles.sh`・`lib/common.sh`）はパス除外で誤検知を防ぐ。 |
+
+> **重要**: `scripts/lint/` は読み取り専用（プロダクションスクリプトを書き換えない）。`make check` 経由および GitHub Actions（`.github/workflows/check.yml` / 詳細は §4.8.9）からのみ呼ばれる。
+
 ### 4.8.7. `launchagents/`
 
 | ファイル | Label / 実行コマンド | スケジュール | RunAtLoad | StandardOutPath / ErrorPath |
@@ -292,7 +334,7 @@ mac-health-keeper/
 | ファイル | 責務 |
 | -------- | ---- |
 | `Package.swift` | SwiftPM 構成（**テスト専用**）。`MacHealthKit` library target（`path: "Sources/MacHealthKit"`）と `MacHealthKitTests` test target を定義。配布ビルドは `install.sh` 内 `swiftc`。 |
-| `Makefile` | `make test`（XCTest 利用可なら `swift test` を実行・XCTest 不在なら skip、続けて test-shell。bats があれば bats、無ければ自前 `*_test.sh`）/ `make test-swift` / `make test-shell`。 |
+| `Makefile` | `make test`（XCTest 利用可なら `swift test` を実行・XCTest 不在なら skip、続けて test-shell。bats があれば bats、無ければ自前 `*_test.sh`）/ `make test-swift` / `make test-shell` / `make check`（lint-shell / lint-shfmt / lint-swift-format / lint-swiftlint / check-cycles / security-scan / test を順次集約。各 step の終了コードを集約し、いずれか失敗で全体非 0）/ `make lint`（lint 系のみ）/ 個別 `make lint-{shell,shfmt,swift-format,swiftlint}` / `make check-cycles` / `make security-scan`。 |
 | `install.sh` | 環境チェック → `scripts/` と `src/` をコピー → plist 実体化 → `swiftc` でビルド → `.app` 組立 → `launchctl bootstrap` → `open` 起動 → ログイン項目追加。冪等。 |
 | `uninstall.sh` | ジョブ bootout → アプリ quit/削除 → ログイン項目削除 → `~/.local/bin/mac-health/` 削除 → ログ削除を対話確認。 |
 | `README.md` | プロジェクトの README（インストール・使い方・配布の概要）。 |
@@ -300,7 +342,14 @@ mac-health-keeper/
 | `AGENTS.md` | エージェント向け規約の入口（`.agents/` への参照）。 |
 | `CLAUDE.md` | Claude Code 向け入口（`.agents/` および `.agents-project/` への参照）。 |
 
-### 4.8.9. ドキュメント・規約
+### 4.8.9. `.github/workflows/`
+
+| ファイル | 役割 |
+| -------- | ---- |
+| `.github/workflows/check.yml` | PR / `main` push 時に **macos-latest** で `make check` を実行する CI。`name: check` / `concurrency.group: check-${workflow}-${ref}` で多重起動を抑制。手順は `actions/checkout@v4` → `shellcheck` の有無確認（不在時は `brew install shellcheck` でフォールバック）→ `make check`。`timeout-minutes: 30` / `permissions.contents: read`。 |
+| `.github/workflows/create-release.yaml` | `main` push 時に **ubuntu-latest** で Release を自動作成。`TAG="v$(TZ=Asia/Tokyo date '+%Y%m%d.%H%M%S')"` → `git tag` → `git push origin "$TAG"` → `gh release create "$TAG" --generate-notes`。`permissions.contents: write` / `concurrency.group: release` で直列化（`cancel-in-progress: false`）。 |
+
+### 4.8.10. ドキュメント・規約
 
 | ファイル / ディレクトリ | 責務 |
 | ----------------------- | ---- |

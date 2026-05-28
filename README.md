@@ -193,6 +193,36 @@ make test-shell    # シェルテストのみ
 
 `make test` は `swift test` を実行した後、`bats` が入っていれば `bats scripts/test/`（`*.bats` を自動走査）、入っていなければ自動で自前 assert ランナー（`bash scripts/test/monitor_test.sh` と `bash scripts/test/metrics_test.sh`）にフォールバックします。いずれかのテストが失敗すると非 0 終了します。
 
+### ローカル検証（lint / format / 循環 / セキュリティ / test）
+
+`make check` で lint・format 差分検査・シェル `source` の循環検出・セキュリティ静的 grep・テストを一気通貫で実行します。
+
+```bash
+make check                # 全検証を順次実行（任意ツール未導入は SKIP）
+make lint                 # lint 系（test を含まない）だけまとめて
+make lint-shell           # shellcheck（必須）
+make lint-shfmt           # shfmt 差分検査（任意・未導入なら SKIP）
+make lint-swift-format    # swift-format lint（任意・未導入なら SKIP）
+make lint-swiftlint       # swiftlint（任意・未導入なら SKIP）
+make check-cycles         # シェル source 依存の循環検出
+make security-scan        # 秘密情報・危険パターンの静的検出
+```
+
+検出結果は標準出力（INFO/結果）または標準エラー（WARN / SKIP / ERROR）に出力されます。`make check` はいずれかの検証が失敗すると非 0 で終了します。
+
+PR / main push 時には GitHub Actions（[`.github/workflows/check.yml`](.github/workflows/check.yml)）が同じ `make check` を `macos-latest` runner で自動実行します。runner に `shellcheck` が同梱されていない場合は `brew install shellcheck` がフォールバックで走ります。`main` への push 時には [`.github/workflows/create-release.yaml`](.github/workflows/create-release.yaml) が JST 日時タグ（例: `v20260528.143000`）を付与し、`gh release create --generate-notes` でリリースノート付きの GitHub Release を作成します。
+
+#### 任意ツールの導入（推奨）
+
+`shellcheck` は本検証の必須ツールで、未導入時は強い WARN を出して失敗扱いになります（既定では `/usr/local/bin/shellcheck` 等にインストール済み想定）。`shfmt` / `swift-format` / `swiftlint` は任意ツールで、未導入なら SKIP として扱われます。導入する場合は Homebrew で:
+
+```bash
+brew install shellcheck     # 必須（未導入なら入れる）
+brew install shfmt          # 任意: シェル整形差分検査
+brew install swift-format   # 任意: Swift lint
+brew install swiftlint      # 任意: Swift lint（別実装）
+```
+
 ### bats の導入（任意）
 
 ```bash

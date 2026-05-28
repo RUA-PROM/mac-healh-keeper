@@ -1,4 +1,4 @@
-# Mac Health Keeper - テスト実行集約
+# Mac Health Keeper - テスト & 検証集約
 #
 # make test       : Swift（XCTest）とシェルのテストを実行し、結果を集約する。
 #                   XCTest が利用可能な環境では swift test の失敗も全体失敗に反映する。
@@ -8,10 +8,23 @@
 # make test-swift : Swift の XCTest のみ実行する。
 # make test-shell : シェルテストのみ実行する（bats 利用可なら bats、不在なら自前 assert）。
 #
+# make check            : lint / format / 循環検出 / セキュリティ / test を一気通貫で実行する。
+#                         未導入の任意ツール（shfmt / swift-format / swiftlint）は SKIP する。
+# make lint             : シェル/Swift の lint 系をまとめて実行（test は含まない）。
+# make lint-shell       : shellcheck（必須ツール）。
+# make lint-shfmt       : shfmt によるシェル整形差分検査（任意・未導入なら SKIP）。
+# make lint-swift-format: swift-format による Swift lint（任意・未導入なら SKIP）。
+# make lint-swiftlint   : swiftlint（任意・未導入なら SKIP）。
+# make check-cycles     : シェル source 依存の循環検出。
+# make security-scan    : 秘密情報・危険パターンの静的検出。
+#
 # 終了コード: swift test とシェルテストのいずれかが失敗すると非 0 終了する。
 #            全て成功（または XCTest skip + シェル成功）で 0 終了する。
+#            make check はいずれかの検証が失敗すると非 0 終了する。
 
-.PHONY: test test-swift test-shell
+.PHONY: test test-swift test-shell \
+        check lint lint-shell lint-shfmt lint-swift-format lint-swiftlint \
+        check-cycles security-scan
 
 # XCTest が利用可能なら swift test を試行（失敗は全体失敗に反映）、
 # 非搭載環境では警告して skip する。続けて test-shell を必ず実行し、
@@ -57,3 +70,48 @@ test-shell:
 		echo "    (bats not found -> fallback to self-made assert runner)"; \
 		bash scripts/test/monitor_test.sh && bash scripts/test/metrics_test.sh && bash scripts/test/log_rotate_test.sh; \
 	fi
+
+# ------------------------------------------------------------------
+# 検証集約（make check）
+# 各検証スクリプトを順次呼び出し、終了コードを集約する。
+# 02_設計 §3.1 を実装。
+# ------------------------------------------------------------------
+
+check:
+	@rc=0; \
+	for step in lint-shell lint-shfmt lint-swift-format lint-swiftlint \
+	            check-cycles security-scan test; do \
+		echo "==> $$step"; \
+		if $(MAKE) --no-print-directory $$step; then \
+			echo "    $$step: OK"; \
+		else \
+			echo "    $$step: FAILED" >&2; \
+			rc=1; \
+		fi; \
+	done; \
+	if [ $$rc -eq 0 ]; then \
+		echo "==> all checks passed"; \
+	else \
+		echo "==> some checks failed" >&2; \
+	fi; \
+	exit $$rc
+
+lint: lint-shell lint-shfmt lint-swift-format lint-swiftlint
+
+lint-shell:
+	@bash scripts/lint/run-shellcheck.sh
+
+lint-shfmt:
+	@bash scripts/lint/run-shfmt.sh
+
+lint-swift-format:
+	@bash scripts/lint/run-swift-format.sh
+
+lint-swiftlint:
+	@bash scripts/lint/run-swiftlint.sh
+
+check-cycles:
+	@bash scripts/lint/check-source-cycles.sh
+
+security-scan:
+	@bash scripts/lint/security-scan.sh
