@@ -218,12 +218,210 @@ launchd が起動する 4 つのジョブを示します。**本表の値は `la
 
 ---
 
+## 3.6. データフローの追加図
+
+### 3.6.1. クラス図（Domain / Infra の主要型）
+
+```mermaid
+classDiagram
+    class MetricsSnapshot {
+        +Int uptimeDays
+        +Int uptimeHours
+        +String loadAvg
+        +String memoryFreePct
+        +String compressedGB
+        +String swapUsed
+        +String dockerLine
+        +Dictionary~String,JobStatus~ jobs
+        +Date lastUpdated
+    }
+    class JobStatus {
+        +Bool loaded
+        +Date? lastRun
+        +Date? nextRun
+    }
+    class ScheduleKind {
+        <<enum>>
+        interval(Int)
+        daily(Int,Int)
+    }
+    class JobCatalog {
+        +jobs: [String]
+        +shortNames: [String:String]
+        +frequencies: [String:String]
+        +schedules: [String:ScheduleKind]
+        +label(for job: String) String
+    }
+    class MetricsParser {
+        +parseLoadAvg(text) String
+        +parseSwapUsed(text) String
+        +parseMemoryFreePct(text) String
+        +uptimeDaysHours(bootString, nowEpoch)
+        +compressedGB(pages) String
+        +dockerLine(running, count) String
+    }
+    class ScheduleTiming {
+        +nextDailyRun(hour, minute, now, calendar) Date
+        +relativeTimeShort(date, now) String
+        +relativeNext(date, intervalSec?, now, calendar) String
+    }
+    class MenuModel {
+        +build(snapshot, catalog, timing, now, calendar) [MenuItemSpec]
+    }
+    class MenuItemSpec {
+        +kind: Kind
+        +title: String
+        +isEnabled: Bool
+        +action: MenuAction?
+        +keyEquivalent: String
+        +representedJob: String?
+        +tooltip: String?
+    }
+    class MenuAction {
+        <<enum>>
+        refreshNow
+        quickAppRefresh
+        quickPurge
+        quickMemoryPressure
+        quickDockerQuit
+        toggleJob
+        runJob
+        openEventsLog
+        openMonitorLog
+        testNotification
+        pauseAllJobs
+        resumeAllJobs
+        showMetricsHelp
+        showAbout
+        terminate
+    }
+    class ShellRunner {
+        <<protocol>>
+        +run(executable, args) String
+    }
+    class ZshShellRunner {
+        +run(executable, args) String
+    }
+    class JobController {
+        +isLoaded(job) Bool
+        +load(job) String
+        +unload(job) String
+        +toggle(job, wasLoaded) String
+        +enableAll() String
+        +disableAll() String
+    }
+    class AppleScriptEscaper {
+        +notificationArgs(message, title)
+        +escapeForAppleScriptLiteral(s) String
+    }
+
+    MetricsSnapshot --> JobStatus
+    JobCatalog --> ScheduleKind
+    MenuModel --> MetricsSnapshot
+    MenuModel --> JobCatalog
+    MenuModel --> ScheduleTiming
+    MenuModel --> MenuItemSpec
+    MenuItemSpec --> MenuAction
+    ZshShellRunner ..|> ShellRunner
+    JobController --> ShellRunner
+    JobController --> JobCatalog
+```
+
+### 3.6.2. ジョブ状態遷移（メニュー操作と launchctl の関係）
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unloaded
+    Unloaded --> Loaded: toggleJob (load) / bootstrap or load
+    Loaded --> Unloaded: toggleJob (unload) / bootout or unload
+    Loaded --> Loaded: runJob / mac-health run job
+    Unloaded --> Unloaded: runJob / mac-health run job
+    Loaded --> Unloaded: pauseAllJobs / mac-health disable
+    Unloaded --> Loaded: resumeAllJobs / mac-health enable
+
+    state Loaded {
+        [*] --> Idle
+        Idle --> Running: launchd schedule (StartInterval/Calendar)
+        Running --> Idle: exit 0 + finalize_job (rotate)
+        Running --> Idle: exit non-zero + finalize_job (rotate)
+    }
+```
+
+> `isLoaded` クエリ（`launchctl list` の出力に label を含む非空行があるか）は副作用なし。`runJob` は CLI `mac-health run <job>` を起動して即時実行する（launchd の周期とは独立）。
+
+---
+
+## 3.7. テスト戦略
+
+| 層 | テスト対象 | フレームワーク | 場所 |
+| -- | ---------- | -------------- | ---- |
+| Domain（Functional Core） | `ScheduleTiming` / `MetricsParser` / `MenuModel` / `JobCatalog` / `AppleScriptEscaper` | XCTest（純粋・固定入力） | `Tests/MacHealthKitTests/*` |
+| Infra 契約 | `ShellRunner` の引数配列契約・注入耐性、`JobController` の CQRS とフォールバック | XCTest（`SpyShellRunner` で呼出を捕捉） | `Tests/MacHealthKitTests/ShellRunnerContractTests.swift`・`ZshShellRunnerInjectionTests.swift`・`JobControllerTests.swift`・`JobControllerSafetyTests.swift` |
+| UI（NSMenu 部） | `MenuBuilder` の AppKit 変換は AppKit 実依存のため XCTest 対象外（02 §6.1）。データの正しさは `MenuModelTests` が網羅 | XCTest（モデル側）／目視 | `Tests/MacHealthKitTests/MenuModelTests.swift` |
+| シェル | `should_notify` / `classify_pressure` / `exceeds_threshold`（`notification_cooldown.sh`）、`metrics_*`（`metrics.sh`）、`rotate_logs`／`needs_rotation`／`next_generation`／`rotate_file`（`log.sh`） | bats（あれば）または自前 `*_test.sh` | `scripts/test/{monitor,metrics,log_rotate}{.bats,_test.sh}` |
+| 集約 | XCTest と シェルテストを集約 | `make test`（XCTest 不在環境では `swift test` を skip し続行） | `Makefile` |
+
+**境界**: 純粋ロジックは値を全網羅、副作用境界はスパイで「I/F の正しさ（引数列・順序）」のみ検証、実 I/O はテスト対象外（02 §6.1）。
+
+---
+
+## 3.8. ビルド / 配備フロー
+
+```mermaid
+sequenceDiagram
+    actor U as ユーザー
+    participant SH as install.sh
+    participant FS as ~/.local/bin/mac-health
+    participant LA as ~/Library/LaunchAgents
+    participant APP as ~/Applications/MacHealth.app
+    participant LC as launchctl
+    participant SE as System Events
+
+    U->>SH: ./install.sh
+    SH->>SH: 環境チェック（macOS / swiftc / osascript）
+    SH->>FS: scripts/{bin,lib,config} と src/ をコピー
+    SH->>LA: launchagents/*.plist.template を {{HOME}} 展開して配置
+    SH->>SH: swiftc で src/*.swift 3 + Sources/MacHealthKit/*.swift 8 を 1 モジュール化
+    SH->>APP: MacHealth + Info.plist で .app バンドル組立
+    loop 4 ジョブ
+        SH->>LC: bootout gui/$UID/$label || true
+        SH->>LC: bootstrap gui/$UID $plist (失敗時 load)
+    end
+    SH->>APP: open でアプリ起動
+    SH->>SE: ログイン項目追加（hidden:true）
+```
+
+- **配布ビルド**: `install.sh` 内の `swiftc` 直接コンパイル（Package.swift は使わない）。テスト用に `Package.swift`（`MacHealthKit` library + `MacHealthKitTests` test target）を保持。
+- **冪等性**: 既存ジョブを `launchctl bootout` してから `bootstrap` する。アプリは事前に `osascript -e 'quit app "Mac Health"'` で停止。ログイン項目は既存なら追加しない。
+- **撤去**: `uninstall.sh` で 4 ジョブ bootout → アプリ quit/削除 → ログイン項目削除 → `~/.local/bin/mac-health/` 削除 → ログは対話確認で残す/削除。
+
+---
+
+## 3.9. 改善経緯（A〜F の反映）
+
+本ドキュメントは、`.workflow/20260527_225413_規約準拠改善/` 配下の親 + 6 サブ issue（A〜F）で行った規約準拠改善の結果を反映しています。各サブの主成果は次のとおり：
+
+| サブ | テーマ | 主要変更 | 反映先 |
+| ---- | ------ | -------- | ------ |
+| A | 責務単位の分離 | `src/MacHealth.swift` の肥大化を解消し、`MenuBuilder` / `MetricsCollector` を分離。Functional Core を `Sources/MacHealthKit/` に集約。 | §3.1 / §3.3 / §4（04 ディレクトリ構成） |
+| B | Functional Core の純化 | `ScheduleTiming` の `Date()` / `Calendar.current` を引数化、`MetricsParser` を純粋関数化。 | §3.3.2 / §3.6.1 |
+| C | metrics.sh への集約 | メトリクス取得処理を `scripts/lib/metrics.sh` に一元化（旧 sed/awk 散在を解消）。Swift も `metrics.sh <metric>` を引数呼び出し。 | §3.3.5(A) / 04 機能設計（メトリクス収集） |
+| D | ロックと cooldown の直列化 | `scripts/lib/lock.sh` の `with_lock` 導入、`notification_cooldown.sh` の cooldown 更新区間を直列化。可用性のためベストエフォート + 記録。 | §3.5 / 04 機能設計（cooldown／ログローテーション） |
+| E | docs 初版整備 | `docs/` の初版（README・01_システム概要・03_アーキテクチャ・04_ディレクトリ構成）と `docs/00_review/` 運用を立ち上げ。 | docs 全体 |
+| F | シェル安全化（CQRS・注入耐性） | `ShellRunner` を引数配列 I/F 化（`ZshShellRunner`）、`JobController` で CQRS 分離（`isLoaded` query / `load` `unload` `toggle` command）、`AppleScriptEscaper` の osascript argv 渡し、`openLog` の `touch && open` 分割、`metrics.sh` の BASH_SOURCE 判定 dispatch を追加。 | §3.3.3 / §3.3.4 / 05 エラー処理と外部通知 |
+
+---
+
 ## 参考資料
 
 - [01 システム概要](../README.md)
 - [04 ディレクトリ構成](../04_ディレクトリ構成/README.md)
+- [02 画面設計](../../02_画面設計/README.md)
+- [03 データ設計](../../03_データ設計/README.md)
+- [04 機能設計](../../04_機能設計/README.md)
+- [05 エラー処理と外部通知](../../05_エラー処理と外部通知/README.md)
 - 一次情報: `launchagents/*.plist.template`、`Sources/MacHealthKit/JobCatalog.swift`、`src/`、`scripts/`
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日
+**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
