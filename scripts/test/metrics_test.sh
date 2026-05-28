@@ -170,6 +170,7 @@ fi
 
 # シナリオ: dispatch 追加後も source 利用で純粋関数が従来どおり動く（再確認・回帰）。
 # Given: dispatch 追加後の metrics.sh を再 source（直接実行でないため dispatch は発火しない）
+# shellcheck source=../lib/metrics.sh
 source "$METRICS_SH"
 # When: 純粋関数を呼ぶ
 out=$(metrics_parse_load_1m "12:00  up 2 days, load averages: 3.45 2.10 1.98")

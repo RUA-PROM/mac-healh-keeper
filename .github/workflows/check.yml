@@ -1,0 +1,36 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure shellcheck
+        shell: bash
+        run: |
+          set -eo pipefail
+          if command -v shellcheck >/dev/null 2>&1; then
+            echo "shellcheck already available: $(shellcheck --version | head -n1 | awk '{print $2}')"
+          else
+            echo "shellcheck not found; installing via Homebrew"
+            brew install shellcheck
+          fi
+
+      - name: Run make check
+        shell: bash
+        run: make check

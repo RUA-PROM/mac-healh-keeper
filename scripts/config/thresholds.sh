@@ -1,5 +1,9 @@
 #!/bin/bash
 # Mac Health Keeper - 閾値設定（編集可）
+#
+# 本ファイルは他スクリプトから source されて参照される設定ファイル。
+# 各変数は定義側からは未使用に見えるため shellcheck SC2034 を抑止する。
+# shellcheck disable=SC2034
 
 # メモリ枯渇通知の閾値
 THRESHOLD_SWAP_USED_MB=5000             # スワップ使用量 (MB) これを超えたら警告

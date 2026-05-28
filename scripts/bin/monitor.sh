@@ -18,6 +18,8 @@ source "$ROOT_DIR/lib/metrics.sh"
 source "$SCRIPT_DIR/notification_cooldown.sh"
 
 JOB="monitor"
+# notification_cooldown.sh の should_notify が参照する環境変数
+# shellcheck disable=SC2034
 COOLDOWN_FILE="$LOG_DIR/.monitor-cooldown"
 
 # 全ジョブ共通の終了処理（ローテート）を確実に呼ぶ（02 §3.3。冪等・trap に一本化）。
