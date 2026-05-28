@@ -30,12 +30,12 @@ final class JobControllerTests: XCTestCase {
         // And (When): もう一度 query を呼ぶ
         _ = controller.isLoaded(job: "monitor")
 
-        // Then: 発行コマンドはすべて launchctl list 系で、load/unload は 0 回
-        let joined = spy.calls.map { $0.args.joined(separator: " ") }.joined(separator: "\n")
-        XCTAssertTrue(joined.contains("launchctl list"))
-        XCTAssertFalse(joined.contains("bootstrap"))
-        XCTAssertFalse(joined.contains("bootout"))
-        XCTAssertFalse(joined.contains("launchctl load"))
+        // Then: 発行コマンドはすべて launchctl list 系（引数配列 ["list"]）で、load/unload は 0 回
+        XCTAssertTrue(spy.calls.allSatisfy { $0.executable == "/bin/launchctl" && $0.args == ["list"] })
+        let joinedArgs = spy.calls.map { $0.args.joined(separator: " ") }.joined(separator: "\n")
+        XCTAssertFalse(joinedArgs.contains("bootstrap"))
+        XCTAssertFalse(joinedArgs.contains("bootout"))
+        XCTAssertFalse(joinedArgs.contains("load"))
         XCTAssertEqual(spy.calls.count, 2)
     }
 
@@ -53,9 +53,10 @@ final class JobControllerTests: XCTestCase {
         // And (When): その後 query する
         let loaded = controller.isLoaded(job: "monitor")
 
-        // Then: load 系コマンドが発行され、query は loaded を返す
-        let joined = spy.calls.map { $0.args.joined(separator: " ") }.joined(separator: "\n")
-        XCTAssertTrue(joined.contains("bootstrap") || joined.contains("launchctl load"))
+        // Then: load 系コマンド（bootstrap or load）が引数配列で発行され、query は loaded を返す
+        let joinedArgs = spy.calls.map { $0.args.joined(separator: " ") }.joined(separator: "\n")
+        XCTAssertTrue(joinedArgs.contains("bootstrap") || joinedArgs.contains("load"))
+        XCTAssertTrue(spy.calls.allSatisfy { $0.executable == "/bin/launchctl" })
         XCTAssertTrue(loaded)
     }
 

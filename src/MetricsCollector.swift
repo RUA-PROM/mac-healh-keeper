@@ -18,52 +18,70 @@ final class MetricsCollector {
     private let jobController: JobController
     private let timing: ScheduleTiming
     private let logDir: String
+    private let metricsShPath: String
 
     init(runner: ShellRunner,
          parser: MetricsParser,
          catalog: JobCatalog,
          jobController: JobController,
          timing: ScheduleTiming,
-         logDir: String) {
+         logDir: String,
+         metricsShPath: String) {
         self.runner = runner
         self.parser = parser
         self.catalog = catalog
         self.jobController = jobController
         self.timing = timing
         self.logDir = logDir
+        self.metricsShPath = metricsShPath
     }
 
-    /// 既存コマンド文字列をそのまま zsh -l -c で実行する（現 shell(_:) 互換）。
-    private func shell(_ cmd: String) -> String {
+    /// 02 §3.4: サブ C 集約済みの metrics.sh を `metrics.sh <metric>` の引数呼び出しで起動する。
+    /// metric は固定列挙（補間値・ユーザー入力なし）。MetricsParser 入力は現状の sed/awk 抽出後と同値。
+    private func metric(_ name: String) -> String {
+        return runner.run("/bin/bash", [metricsShPath, name])
+    }
+
+    /// 02 §8.3 残置: パイプ前提の固定文字列実行。metrics.sh への寄せが MetricsParser 入力書式の
+    /// 不一致（＝振る舞い破壊）を招くため、引数配列＋固定文字列で残置する。**補間値は流入しない**
+    /// （すべて固定リテラルのみ・注入面なし）。bootStr の生 boot epoch・compressor 生ページ数・
+    /// docker count の 3 秒タイムアウト（& wait）は MetricsParser がそのまま入力として要求するため。
+    private func shellFixed(_ cmd: String) -> String {
         return runner.run("/bin/zsh", ["-l", "-c", cmd])
     }
 
-    /// 現 gatherMetrics() と同一のコマンド・順序で収集し MetricsSnapshot を組み立てる。
+    /// 現 gatherMetrics() と同一の値・順序で収集し MetricsSnapshot を組み立てる（振る舞い不変）。
     func collect() -> MetricsSnapshot {
         var s = MetricsSnapshot()
 
-        let load = shell("uptime | sed -E 's/.*load averages?:?[[:space:]]+([0-9.]+).*/\\1/'")
+        // load/swap/free は metrics.sh の raw 取得関数が現状の sed/awk 抽出と同一テキストを返すため寄せる。
+        let load = metric("load")
         s.loadAvg = parser.parseLoadAvg(load)
 
-        let swap = shell("sysctl -n vm.swapusage | sed -E 's/.*used = ([0-9.]+M).*/\\1/'")
+        let swap = metric("swap")
         s.swapUsed = parser.parseSwapUsed(swap)
 
-        let memFree = shell("memory_pressure 2>/dev/null | awk -F': ' '/memory free percentage/ {gsub(\"%\",\"\",$2); print $2}'")
+        let memFree = metric("free")
         s.memoryFreePct = parser.parseMemoryFreePct(memFree)
 
-        let bootStr = shell("sysctl -n kern.boottime | awk '{print $4}' | tr -d ','")
+        // 02 §8.3 残置: boot epoch は MetricsParser に「生の boot 文字列」を渡す必要があり、
+        // metrics.sh の uptime_days/hours は値を算出済みで返すため寄せると入力書式が変わる。固定文字列で残置。
+        let bootStr = shellFixed("sysctl -n kern.boottime | awk '{print $4}' | tr -d ','")
         let now = Int(Date().timeIntervalSince1970)
         let uptime = parser.uptimeDaysHours(bootString: bootStr, nowEpoch: now)
         s.uptimeDays = uptime.days
         s.uptimeHours = uptime.hours
 
-        let compPagesStr = shell("vm_stat | awk '/Pages occupied by compressor/ {gsub(\"\\\\.\",\"\"); print $5}'")
+        // 02 §8.3 残置: MetricsParser.compressedGB は「生ページ数」を要求するが metrics.sh は GB へ
+        // 換算済みを返すため寄せると入力書式が変わる。固定文字列で残置。
+        let compPagesStr = shellFixed("vm_stat | awk '/Pages occupied by compressor/ {gsub(\"\\\\.\",\"\"); print $5}'")
         s.compressedGB = parser.compressedGB(pages: compPagesStr)
 
-        let dockerRunning = shell("pgrep -f 'com\\.apple\\.Virtualization\\.VirtualMachine' >/dev/null && echo 1 || echo 0")
+        let dockerRunning = shellFixed("pgrep -f 'com\\.apple\\.Virtualization\\.VirtualMachine' >/dev/null && echo 1 || echo 0")
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
         if dockerRunning {
-            let count = shell("(docker ps -q 2>/dev/null | wc -l | tr -d ' ') & p=$!; (sleep 3; kill -9 $p 2>/dev/null) >/dev/null 2>&1 & wait $p 2>/dev/null")
+            // 02 §8.3 残置: 3 秒タイムアウト（& wait）は単純な引数配列では再現困難。固定文字列で残置（注入なし）。
+            let count = shellFixed("(docker ps -q 2>/dev/null | wc -l | tr -d ' ') & p=$!; (sleep 3; kill -9 $p 2>/dev/null) >/dev/null 2>&1 & wait $p 2>/dev/null")
             s.dockerLine = parser.dockerLine(running: true, containerCount: count)
         } else {
             s.dockerLine = parser.dockerLine(running: false, containerCount: "")

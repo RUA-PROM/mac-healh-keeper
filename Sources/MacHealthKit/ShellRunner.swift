@@ -16,18 +16,20 @@ public protocol ShellRunner {
     func run(_ executable: String, _ args: [String]) -> String
 }
 
-/// 既定実装。当面は現状の `zsh -l -c <文字列>` 実行をラップする。
-/// 呼び出し側は run("/bin/zsh", ["-l", "-c", cmd]) として既存のコマンド文字列をそのまま渡す。
-/// F が run の実装を executable + args の直接実行へ差し替えても呼び出し側を変えずに済む境界。
+/// 既定実装（サブ F・02 §3.1 / §8.2）。
+/// `Process.executableURL` + `arguments` で **引数配列のまま** 外部コマンドを直接起動する。
+/// 各 args 要素はシェルのトークン分割・展開（`;`・`$()`・`&&`・`||`）を経ずに渡るため、
+/// `; rm -rf x` や `$(touch y)` を含む引数は単一引数として扱われ、追加コマンドは実行されない（UC1）。
+/// I/F（実行ファイル＋引数配列）と stdout の取り回し（trim は呼び出し元）は不変。
 public final class ZshShellRunner: ShellRunner {
 
     public init() {}
 
-    /// 現 shell(_:) L597-613 と同一挙動: Process で実行、throw 時 ""、stderr 破棄。
+    /// executable + args を引数配列のまま直接起動し stdout（UTF-8）を返す。throw 時 ""、stderr 破棄（現状互換）。
     @discardableResult
     public func run(_ executable: String, _ args: [String]) -> String {
         let task = Process()
-        task.launchPath = executable
+        task.executableURL = URL(fileURLWithPath: executable)
         task.arguments = args
         let pipe = Pipe()
         task.standardOutput = pipe

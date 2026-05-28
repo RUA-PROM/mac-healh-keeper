@@ -116,6 +116,68 @@ assert_eq "11.39" "$raw" "UC2: load raw keeps mac-health current format"
 # And (Then): 判定用は %.1f の 11.4（monitor の現状書式）
 assert_eq "11.4" "$rounded" "UC2: load rounded keeps monitor current format"
 
+# --- サブ F: CLI ディスパッチ（直接実行）と source 利用不変 ---
+
+METRICS_SH="$SCRIPT_DIR/../lib/metrics.sh"
+
+# シナリオ: metrics.sh の dispatch が対象関数へ委譲し source 利用を壊さない（F・03 §2.4.4）。
+# Given: source 後に純粋関数が直接呼べる状態（source 利用が不変であることの確認）
+out=$(metrics_parse_swap_raw "used = 512.00M")
+# When/Then: source 経由の既存挙動が従来どおり（512.00M）
+assert_eq "512.00M" "$out" "F-T4: source 利用の純粋パース関数は不変"
+
+# シナリオ: metrics.sh swap を直接実行すると metrics_swap_used_raw 同値（固定 sysctl を PATH で注入）。
+# Given: vm.swapusage を固定出力する stub sysctl を PATH 先頭に置く
+STUB_DIR=$(mktemp -d)
+cat > "$STUB_DIR/sysctl" <<'STUB'
+#!/bin/bash
+# vm.swapusage 引数のときだけ固定値を返す（他はパススルー不要・テスト用途）
+if [ "$2" = "vm.swapusage" ]; then
+  printf 'total = 2048.00M  used = 512.00M  free = 1536.00M\n'
+else
+  printf '\n'
+fi
+STUB
+chmod +x "$STUB_DIR/sysctl"
+# When: metrics.sh swap を直接実行する
+out=$(PATH="$STUB_DIR:$PATH" bash "$METRICS_SH" swap)
+# Then: metrics_swap_used_raw と同値（"512.00M"）が返る
+assert_eq "512.00M" "$out" "F-T4: metrics.sh swap (direct) == metrics_swap_used_raw"
+
+# シナリオ: metrics.sh load を直接実行すると metrics_load_1m_raw 同値（固定 uptime を PATH で注入）。
+# Given: uptime を固定出力する stub を PATH 先頭に置く
+cat > "$STUB_DIR/uptime" <<'STUB'
+#!/bin/bash
+printf '9:00  up 1 day, load averages: 11.39 8.10 6.98\n'
+STUB
+chmod +x "$STUB_DIR/uptime"
+# When: metrics.sh load を直接実行する
+out=$(PATH="$STUB_DIR:$PATH" bash "$METRICS_SH" load)
+# Then: metrics_load_1m_raw と同値（"11.39"）が返る
+assert_eq "11.39" "$out" "F-T4: metrics.sh load (direct) == metrics_load_1m_raw"
+
+# シナリオ: 未知の metric は非 0 終了で安全（注入面なし・既定）。
+# Given: 未知のメトリクス名
+# When: metrics.sh bogus を直接実行する
+PATH="$STUB_DIR:$PATH" bash "$METRICS_SH" bogus >/dev/null 2>&1
+rc=$?
+# Then: 非 0 終了する（未知 metric の安全な扱い）
+if [ "$rc" -ne 0 ]; then
+  PASS=$((PASS + 1)); echo "  ok   - F-T4: metrics.sh unknown metric exits non-zero"
+else
+  FAIL=$((FAIL + 1)); echo "  FAIL - F-T4: metrics.sh unknown metric exits non-zero (rc=$rc)"
+fi
+
+# シナリオ: dispatch 追加後も source 利用で純粋関数が従来どおり動く（再確認・回帰）。
+# Given: dispatch 追加後の metrics.sh を再 source（直接実行でないため dispatch は発火しない）
+source "$METRICS_SH"
+# When: 純粋関数を呼ぶ
+out=$(metrics_parse_load_1m "12:00  up 2 days, load averages: 3.45 2.10 1.98")
+# Then: 従来どおり %.1f 丸めの 3.5（source 利用不変）
+assert_eq "3.5" "$out" "F-T4: source 利用は dispatch 追加後も不変"
+
+rm -rf "$STUB_DIR"
+
 # --- 集計 ---
 echo ""
 echo "metrics shell tests: $PASS passed, $FAIL failed"

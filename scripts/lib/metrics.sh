@@ -161,3 +161,23 @@ metrics_docker_status() {
     printf 'stopped'
   fi
 }
+
+# ===== CLI ディスパッチ（直接実行時のみ・サブ F 02 §3.4） =====
+#
+# Swift（MetricsCollector）から `metrics.sh <metric>` の引数呼び出しで取得関数を 1 回起動するための
+# 薄いエントリ。BASH_SOURCE 判定により **直接実行時のみ** dispatch し、source 利用
+# （mac-health / monitor.sh / metrics.bats / metrics_test.sh）は従来どおり関数定義のみで不変。
+# メトリクス名は Swift 側の固定列挙であり補間値（ユーザー入力）は流入しない（注入面なし）。
+# 未知の metric は非 0 終了（出力なし）で安全に扱う。
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  case "${1:-}" in
+    load)         metrics_load_1m_raw ;;
+    swap)         metrics_swap_used_raw ;;
+    free)         metrics_memory_free_pct ;;
+    compressed)   metrics_compressed_gb ;;
+    uptime_days)  metrics_uptime_days_now ;;
+    uptime_hours) metrics_uptime_hours_now ;;
+    docker)       metrics_docker_status ;;
+    *)            exit 2 ;;
+  esac
+fi

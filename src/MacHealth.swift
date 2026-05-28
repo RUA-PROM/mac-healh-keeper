@@ -20,7 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let homeDir = NSHomeDirectory()
     var binDir: String { "\(homeDir)/.local/bin/mac-health/bin" }
+    var libDir: String { "\(homeDir)/.local/bin/mac-health/lib" }
     var machealthCLI: String { "\(binDir)/mac-health" }
+    var metricsShPath: String { "\(libDir)/metrics.sh" }
     var launchAgentDir: String { "\(homeDir)/Library/LaunchAgents" }
     var logDir: String { "\(homeDir)/Library/Logs/MacHealth" }
 
@@ -28,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let runner: ShellRunner = ZshShellRunner()
     private let catalog = JobCatalog()
     private let timing = ScheduleTiming()
+    private let escaper = AppleScriptEscaper()
     private let menuModel = MenuModel()
     private let menuBuilder = MenuBuilder()
     private lazy var jobController = JobController(
@@ -43,14 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         catalog: catalog,
         jobController: jobController,
         timing: timing,
-        logDir: logDir
+        logDir: logDir,
+        metricsShPath: metricsShPath
     )
-
-    /// 既存コマンド文字列をそのまま zsh -l -c で実行する（現 shell(_:) 互換）。
-    @discardableResult
-    private func shell(_ cmd: String) -> String {
-        return runner.run("/bin/zsh", ["-l", "-c", cmd])
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -113,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func quickAppRefresh() {
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = self.shell("'\(self.machealthCLI)' run refresh")
+            _ = self.runner.run(self.machealthCLI, ["run", "refresh"])
             DispatchQueue.main.async {
                 self.refreshMetricsAsync()
             }
@@ -130,16 +128,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            _ = shell("""
-                osascript -e 'tell application "Terminal" to activate' \
-                          -e 'tell application "Terminal" to do script "sudo purge && echo \\"\\nDone. このウィンドウは閉じて構いません。\\""'
-                """)
+            // 02 §3.5: 複数 -e を引数配列の独立要素に分解（シェル再パースを排除）。
+            // AppleScript ソースは固定リテラルで、Terminal で `sudo purge` を実行する振る舞いは不変。
+            _ = runner.run("/usr/bin/osascript", [
+                "-e", "tell application \"Terminal\" to activate",
+                "-e", "tell application \"Terminal\" to do script \"sudo purge && echo \\\"\\nDone. このウィンドウは閉じて構いません。\\\"\"",
+            ])
         }
     }
 
     @objc func quickMemoryPressure() {
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = self.shell("memory_pressure -l warn 2>/dev/null || true")
+            // 02 §3.5: 引数配列で起動。戻り値無視で現状の `|| true`（失敗を無視）相当。
+            _ = self.runner.run("/usr/bin/memory_pressure", ["-l", "warn"])
             DispatchQueue.main.async {
                 self.refreshMetricsAsync()
             }
@@ -148,7 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func quickDockerQuit() {
-        _ = shell("osascript -e 'quit app \"Docker Desktop\"'")
+        // 02 §3.5: -e の AppleScript は固定リテラル。引数として渡しシェル再パースを排除。
+        _ = runner.run("/usr/bin/osascript", ["-e", "quit app \"Docker Desktop\""])
         notify("🐳 Docker Desktop を Quit しました")
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.refreshMetricsAsync()
@@ -195,7 +197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func runJob(_ sender: NSMenuItem) {
         guard let job = sender.representedObject as? String else { return }
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = self.shell("'\(self.machealthCLI)' run \(job)")
+            // 02 §3.5: job は固定値だが引数要素にする（補間しない）。
+            _ = self.runner.run(self.machealthCLI, ["run", job])
             DispatchQueue.main.async {
                 self.refreshMetricsAsync()
             }
@@ -235,17 +238,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Logs
 
     @objc func openEventsLog() {
-        let path = "\(logDir)/events.log"
-        _ = shell("touch '\(path)' && open -a Console '\(path)'")
+        openLog(path: "\(logDir)/events.log")
     }
 
     @objc func openMonitorLog() {
-        let path = "\(logDir)/monitor.log"
-        _ = shell("touch '\(path)' && open -a Console '\(path)'")
+        openLog(path: "\(logDir)/monitor.log")
+    }
+
+    /// 02 §3.5: `touch '<path>' && open -a Console '<path>'` の `&&` シェル連結を排除し、
+    /// touch → open を 2 回の引数配列起動に分割する。path は単一引数要素として渡す。ログ出力先は不変。
+    private func openLog(path: String) {
+        _ = runner.run("/usr/bin/touch", [path])
+        _ = runner.run("/usr/bin/open", ["-a", "Console", path])
     }
 
     @objc func testNotification() {
-        _ = shell("'\(machealthCLI)' test")
+        _ = runner.run(machealthCLI, ["test"])
     }
 
     // MARK: - Help / About
@@ -321,7 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Notification
 
     func notify(_ message: String) {
-        _ = shell("osascript -e 'display notification \"\(message.replacingOccurrences(of: "\"", with: "\\\""))\" with title \"Mac Health\"'")
+        // 02 §3.2 案 A: メッセージ/タイトルを osascript の argv へ渡し、シェル・AppleScript リテラルへ
+        // 補間しない（"・\・改行を含んでも壊れず注入されない）。通知タイトル「Mac Health」・文言は不変。
+        let n = escaper.notificationArgs(message: message, title: "Mac Health")
+        _ = runner.run(n.executable, n.args)
     }
 }
 

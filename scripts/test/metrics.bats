@@ -112,3 +112,43 @@ setup() {
   # And (Then): 判定用は %.1f の 11.4（monitor の現状書式）
   [ "$rounded" = "11.4" ]
 }
+
+# --- サブ F: CLI ディスパッチ（直接実行）と source 利用不変 ---
+
+# シナリオ: metrics.sh swap を直接実行すると metrics_swap_used_raw 同値（固定 sysctl を PATH で注入・F 03 §2.4.4）。
+@test "metrics.sh swap (direct exec) equals metrics_swap_used_raw" {
+  # Given: vm.swapusage を固定出力する stub sysctl を PATH 先頭に置く
+  STUB_DIR=$(mktemp -d)
+  cat > "$STUB_DIR/sysctl" <<'STUB'
+#!/bin/bash
+if [ "$2" = "vm.swapusage" ]; then
+  printf 'total = 2048.00M  used = 512.00M  free = 1536.00M\n'
+else
+  printf '\n'
+fi
+STUB
+  chmod +x "$STUB_DIR/sysctl"
+  # When: metrics.sh swap を直接実行する
+  run env PATH="$STUB_DIR:$PATH" bash "${BATS_TEST_DIRNAME}/../lib/metrics.sh" swap
+  rm -rf "$STUB_DIR"
+  # Then: metrics_swap_used_raw と同値（"512.00M"）が返る
+  [ "$output" = "512.00M" ]
+}
+
+# シナリオ: 未知の metric は非 0 終了で安全（注入面なし・既定）。
+@test "metrics.sh unknown metric exits non-zero" {
+  # Given: 未知のメトリクス名
+  # When: metrics.sh bogus を直接実行する
+  run bash "${BATS_TEST_DIRNAME}/../lib/metrics.sh" bogus
+  # Then: 非 0 終了する
+  [ "$status" -ne 0 ]
+}
+
+# シナリオ: dispatch 追加後も source 利用で純粋関数が従来どおり動く（回帰・source 不変）。
+@test "source usage stays unchanged after dispatch added" {
+  # Given: setup() で source 済み（直接実行でないため dispatch は発火しない）
+  # When: 純粋関数を呼ぶ
+  run metrics_parse_load_1m "12:00  up 2 days, load averages: 3.45 2.10 1.98"
+  # Then: 従来どおり %.1f 丸めの 3.5
+  [ "$output" = "3.5" ]
+}

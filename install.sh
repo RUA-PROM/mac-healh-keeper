@@ -84,6 +84,7 @@ swiftc MacHealth.swift MetricsCollector.swift MenuBuilder.swift \
   "$REPO_DIR/Sources/MacHealthKit/MetricsParser.swift" \
   "$REPO_DIR/Sources/MacHealthKit/MenuModel.swift" \
   "$REPO_DIR/Sources/MacHealthKit/ShellRunner.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/AppleScriptEscaper.swift" \
   "$REPO_DIR/Sources/MacHealthKit/JobController.swift" \
   -o MacHealth
 echo "  ✅ ビルド完了 ($(ls -la MacHealth | awk '{print $5}') bytes)"
