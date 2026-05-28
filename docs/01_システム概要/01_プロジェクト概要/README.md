@@ -52,6 +52,7 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 | ログ | `~/Library/Logs/MacHealth/` | `events.log`（通知履歴）／`<job>.log`（各ジョブ）／`launchd.<job>.{out,err}`（launchd 標準出力／エラー）／`rotate.err`（ローテート失敗）。 |
 | 仕様書 | `docs/`（本ドキュメント群） | 「生きているドキュメント」。実装変更時に更新し `docs/00_review/` に整合性確認を記録。 |
 | AI／開発規約 | `.agents/` / `.agents-project/` / `.workflow/` | 実行契約・spec・command・skill・テンプレート・ワークフロー成果物。 |
+| 開発フロー | `Makefile`（`make check`）・`scripts/lint/`・`.github/workflows/{check.yml,create-release.yaml}` | ローカル検証（lint / format / 循環 / セキュリティ / test）と CI / Release 自動化。配布物には含まない（[04 機能設計 / ローカル検証](../../04_機能設計/ローカル検証/README.md)・[04 機能設計 / CI・Release 自動化](../../04_機能設計/CI・Release自動化/README.md)）。 |
 
 ## 1.4. 技術スタック
 
@@ -66,6 +67,8 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 | 通知 | osascript（AppleScript） | macOS 同梱 | デスクトップ通知発行。Swift 側は `AppleScriptEscaper` で argv 渡し、シェル側は `notify.sh`。 | `Sources/MacHealthKit/AppleScriptEscaper.swift`・`scripts/lib/notify.sh` |
 | メトリクス取得 | `sysctl` / `vm_stat` / `uptime` / `memory_pressure` / `pgrep` / `docker` | macOS 同梱・任意 | `scripts/lib/metrics.sh` が一元化。Swift は `metrics.sh <metric>` を引数呼び出し。 | `scripts/lib/metrics.sh`・`src/MetricsCollector.swift` |
 | テスト | XCTest（Swift） / bats / 自前 `*_test.sh`（シェル） | - | `Tests/MacHealthKitTests/`・`scripts/test/`。`make test` で集約。 | `Makefile`・`Package.swift` |
+| 検証ツール | `shellcheck`（必須） / `shfmt` / `swift-format` / `swiftlint`（任意） | Homebrew | `make check` から `scripts/lint/run-*.sh` 経由で実行。任意ツール未導入は SKIP。 | `Makefile`・`scripts/lint/*` |
+| CI / Release | GitHub Actions（`macos-latest` / `ubuntu-latest`） | - | PR / `main` push で `make check`、`main` マージで JST 日時タグ + `gh release --generate-notes`。 | `.github/workflows/{check.yml, create-release.yaml}` |
 
 ## 1.5. 対応 OS / 動作要件
 

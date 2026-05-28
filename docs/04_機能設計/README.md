@@ -24,6 +24,8 @@ Mermaid 図作成時は [`.workflow/templates/AGENTS_MERMAID_RULES.md`](../../.w
 | F006 | 通知（注入耐性付き） | osascript argv 渡し + cooldown 制御 | [通知](./通知/README.md) |
 | F007 | ログ・ローテーション | log / log_event / rotate_logs / finalize_job + lock.sh | [ログとローテーション](./ログとローテーション/README.md) |
 | F008 | LaunchAgent 配備 | install.sh / uninstall.sh による配置・登録 | [LaunchAgent配備](./LaunchAgent配備/README.md) |
+| F009 | ローカル検証 | `make check` 集約（lint / format / 循環 / セキュリティ / test）と `scripts/lint/` のランナー群 | [ローカル検証](./ローカル検証/README.md) |
+| F010 | CI・Release 自動化 | GitHub Actions（PR/`main` 時の `make check`、`main` マージ時の JST 日時タグ + `gh release --generate-notes`） | [CI・Release自動化](./CI・Release自動化/README.md) |
 
 ## 4.2. バッチ処理仕様（launchd 駆動の 4 ジョブ）
 

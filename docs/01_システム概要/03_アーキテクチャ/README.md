@@ -397,6 +397,47 @@ sequenceDiagram
 
 ---
 
+## 3.8.1. ローカル検証（make check）と CI / Release 自動化
+
+`install.sh` / `swiftc` による配布ビルドとは独立に、**コード品質を担保するローカル検証 (`make check`) と GitHub Actions による CI / Release** を持ちます。配布物の所在には影響しません（CI / Release は開発フロー側の責務）。
+
+### 3.8.1.1. ローカル検証（`make check`）
+
+`Makefile::check` がランナーを順次呼び、終了コードを集約します（[04 機能設計 / ローカル検証](../../04_機能設計/ローカル検証/README.md)）。
+
+| step | 呼び出し先 | ツール | 必須／任意 | 失敗時の扱い |
+| ---- | ---------- | ------ | ---------- | ------------ |
+| `lint-shell` | `scripts/lint/run-shellcheck.sh` | `shellcheck` | **必須**（不在は強い WARN + 非 0） | 失敗 |
+| `lint-shfmt` | `scripts/lint/run-shfmt.sh` | `shfmt` | 任意（不在は SKIP） | 失敗 |
+| `lint-swift-format` | `scripts/lint/run-swift-format.sh` | `swift-format` | 任意（不在は SKIP） | 失敗 |
+| `lint-swiftlint` | `scripts/lint/run-swiftlint.sh` | `swiftlint` | 任意（不在は SKIP） | 失敗 |
+| `check-cycles` | `scripts/lint/check-source-cycles.sh` | awk DFS（外部依存なし） | 必須 | 失敗 |
+| `security-scan` | `scripts/lint/security-scan.sh` | `grep -E` | 必須 | 失敗 |
+| `test` | `swift test` + `bats` または自前 `*_test.sh` | XCTest / bats | XCTest 不在は SKIP / シェルは必須 | 失敗 |
+
+> ランナーはすべて **bash 3.2 互換**で書かれており、GNU 拡張（連想配列・`mapfile`）や `grep -P` は使いません。共通関数は `scripts/lint/lib/common.sh` に集約。
+
+### 3.8.1.2. CI（`.github/workflows/check.yml`）
+
+PR / `main` push 時に **macos-latest** で `make check` を自動実行します。`shellcheck` は GitHub runner に同梱されている場合があるため、`command -v shellcheck` で有無を確認し、不在時のみ `brew install shellcheck` でフォールバックします。`timeout-minutes: 30` / `permissions.contents: read` / `concurrency.group: check-${workflow}-${ref}`（`cancel-in-progress: true`）。
+
+### 3.8.1.3. Release 自動化（`.github/workflows/create-release.yaml`）
+
+`main` への push を契機に **ubuntu-latest** で Release を作成します。
+
+```bash
+TAG="v$(TZ=Asia/Tokyo date '+%Y%m%d.%H%M%S')"
+git tag "$TAG"
+git push origin "$TAG"
+gh release create "$TAG" --generate-notes
+```
+
+`permissions.contents: write` / `concurrency.group: release`（`cancel-in-progress: false`）で直列化し、同時多発 push 時のタグ衝突を抑制します。Release ノートは GitHub の `--generate-notes` 機能でコミット履歴から自動生成され、リリースアセットの添付は行いません（バイナリは利用者側で `install.sh` を実行してビルドする運用）。
+
+> ローカル検証・CI・Release はいずれも **配布物（`install.sh` 経由の `~/Applications/MacHealth.app`）には含まれません**。開発・保守フローの一部であり、エンドユーザーの実行系には影響しません。
+
+---
+
 ## 3.9. 改善経緯（A〜F の反映）
 
 本ドキュメントは、`.workflow/20260527_225413_規約準拠改善/` 配下の親 + 6 サブ issue（A〜F）で行った規約準拠改善の結果を反映しています。各サブの主成果は次のとおり：
