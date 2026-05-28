@@ -88,7 +88,7 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 ## 1.7. ライセンス
 
 - **ライセンス**: MIT License（リポジトリ直下 `LICENSE` を参照）。
-- **コピーライト**: `© 2026 adachi-tatsuru`（`src/Info.plist` の `NSHumanReadableCopyright`）。
+- **コピーライト**: `© 2026 RUA PROM`（`src/Info.plist` の `NSHumanReadableCopyright`）。
 
 ---
 
