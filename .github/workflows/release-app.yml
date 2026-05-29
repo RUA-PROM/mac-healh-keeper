@@ -15,7 +15,8 @@
 #   - actions/checkout は `fetch-depth: 0` + `fetch-tags: true`（tag 履歴必須）。
 #   - artifact 検証は scripts/lib/release_artifact_validator.sh で
 #     CFBundleVersion = git describe 期待値の厳格一致を確認。
-#   - artifact 添付は softprops/action-gh-release@v2 を使用。
+#   - artifact 添付は `gh release upload` を直接使用（workflow_dispatch 時の
+#     target_commitish immutable エラーを回避する目的。汎用 release action は使わない）。
 
 name: Release artifact (.app)
 
@@ -132,27 +133,41 @@ jobs:
             "$PWD"
 
       - name: Upload .app.zip to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.resolve_tag.outputs.tag }}
-          files: build/MacHealth-*.zip
-          fail_on_unmatched_files: true
-          # 既存 Release の本文・assets は維持する（create-release.yaml で生成済み）
-          append_body: true
-          body: |
-            ## .app artifact
-
-            - Filename: `${{ env.ZIP_BASENAME }}`
-            - CFBundleVersion: `${{ env.CFBUNDLE_VERSION }}`
-            - Built on: `macos-latest` via `.github/workflows/release-app.yml`
-
-            ### Gatekeeper 回避（署名なし配布）
-
-            ```bash
-            xattr -dr com.apple.quarantine MacHealth.app
-            # または初回起動時に右クリック → 開く
-            ```
-
-            > 本 artifact は署名・公証なしの開発用配布です。
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve_tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub Actions の workflow_dispatch 経路では `github.ref` が dispatcher branch
+          # （refs/heads/main）になるため、リリース更新系の action が target_commitish を
+          # 上書きしようとして "release is immutable" で失敗する。
+          # `gh release upload` を直接使うことで target_commitish に触らず、
+          # 既存 Release（create-release.yaml が打った tag/Release）への asset 追加のみ行う。
+          # これは既存 Release（create-release.yaml が打った tag/Release）への
+          # asset 追加のみを行い、target_commitish には触らない。
+          zip_path="$ZIP_PATH"
+          echo "uploading $zip_path to release $TAG"
+          gh release upload "$TAG" "$zip_path" --clobber
+
+          # Release notes に .app artifact 説明を追記（既存 body は維持）。
+          current_body=$(gh release view "$TAG" --json body -q '.body' || echo "")
+          # body が既に "## .app artifact" を含む場合は追記しない（再 dispatch のべき等性）。
+          if printf '%s' "$current_body" | grep -q '## .app artifact'; then
+            echo "release body already contains .app artifact section; skip append"
+          else
+            {
+              printf '%s\n\n' "$current_body"
+              printf '## .app artifact\n\n'
+              printf -- '- Filename: `%s`\n' "$ZIP_BASENAME"
+              printf -- '- CFBundleVersion: `%s`\n' "$CFBUNDLE_VERSION"
+              printf -- '- Built on: `macos-latest` via `.github/workflows/release-app.yml`\n\n'
+              printf '### Gatekeeper 回避（署名なし配布）\n\n'
+              printf '```bash\n'
+              printf 'xattr -dr com.apple.quarantine MacHealth.app\n'
+              printf '# または初回起動時に右クリック → 開く\n'
+              printf '```\n\n'
+              printf '> 本 artifact は署名・公証なしの開発用配布です。\n'
+            } > /tmp/release_notes.md
+            gh release edit "$TAG" --notes-file /tmp/release_notes.md
+          fi
