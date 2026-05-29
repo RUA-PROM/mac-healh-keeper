@@ -88,7 +88,10 @@ test-shell:
 		  && bash scripts/test/metrics_test.sh \
 		  && bash scripts/test/log_rotate_test.sh \
 		  && bash scripts/test/install_metrics_smoke_test.sh \
-		  && bash scripts/test/version_stamp_test.sh; \
+		  && bash scripts/test/version_stamp_test.sh \
+		  && bash scripts/test/launchagent_lifecycle_test.sh \
+		  && bash scripts/test/plist_validator_test.sh \
+		  && bash scripts/test/launchagent_doctor_test.sh; \
 	fi
 
 # ------------------------------------------------------------------
