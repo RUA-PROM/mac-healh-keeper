@@ -25,7 +25,7 @@
 .PHONY: test test-swift test-swift-purecore test-shell \
         check lint lint-shell lint-shfmt lint-swift-format lint-swiftlint \
         check-cycles security-scan \
-        build install reinstall
+        build build-bin build-app package clean clean-app install reinstall
 
 # 純粋関数の単体テスト経路は 2 系統ある（issue: 20260529_083530_メトリクス非表示修正 フォロー）。
 #   1) test-swift-purecore: `swift run MacHealthCheck` で XCTest 非依存の純粋テストを実行。
@@ -92,7 +92,8 @@ test-shell:
 		  && bash scripts/test/launchagent_lifecycle_test.sh \
 		  && bash scripts/test/plist_validator_test.sh \
 		  && bash scripts/test/launchagent_doctor_test.sh \
-		  && bash scripts/test/shallow_clone_guard_test.sh; \
+		  && bash scripts/test/shallow_clone_guard_test.sh \
+		  && bash scripts/test/build_app_bundle_test.sh; \
 	fi
 
 # ------------------------------------------------------------------
@@ -143,14 +144,27 @@ security-scan:
 # ------------------------------------------------------------------
 # ビルド / インストール導線
 # issue: 20260529_083530_メトリクス非表示修正
+#        20260529_122727_Makefile_app化拡張（.app バンドル化）
 # install.sh / uninstall.sh への薄い委譲ターゲット。
 # 「アプリだけ更新／scripts だけ更新」の運用ミスを避けるため、
 # 開発者には make install（または make reinstall）の利用を推奨する。
-# build は install.sh の swiftc コマンドと同じファイル構成で
-# build/MacHealth を生成する。.app バンドルや LaunchAgent 配置は install.sh が担う。
+#
+# 構成（20260529_122727_Makefile_app化拡張 §2 で再定義）:
+#   build-bin  : swiftc で build/MacHealth 単体バイナリのみ生成（後方互換）。
+#   build      : build-bin → scripts/lib/build_app_bundle.sh で .app 組み立て
+#                + version_stamp.sh で CFBundleVersion stamp。
+#                成果物: build/MacHealth.app（CFBundleVersion = `git describe --tags --always`）。
+#   build-app  : build のエイリアス（明示的に .app を作る意図を持たせたいとき用）。
+#   package    : build 後の build/MacHealth.app を build/MacHealth-<version>.zip に zip 化。
+#                CI artifact 用途。
+#   clean      : build/ を一括削除。
+#   clean-app  : build/MacHealth.app のみ削除（バイナリは温存）。
 # ------------------------------------------------------------------
 
-build:
+# 既存の swiftc 経路を build-bin として温存する。
+# `make build` から内部的に呼ばれるほか、.app を作らずバイナリだけ確認したい
+# 開発者ユースケースのために直接実行も可能。
+build-bin:
 	@echo "==> swiftc build (build/MacHealth)"
 	@mkdir -p build
 	@swiftc src/MacHealth.swift src/MetricsCollector.swift src/MenuBuilder.swift \
@@ -163,9 +177,43 @@ build:
 	  Sources/MacHealthKit/ShellRunner.swift \
 	  Sources/MacHealthKit/AppleScriptEscaper.swift \
 	  Sources/MacHealthKit/JobController.swift \
+	  Sources/MacHealthKit/AppBundlePolicy.swift \
 	  Sources/MacHealthKit/Version.swift \
 	  -o build/MacHealth
 	@ls -la build/MacHealth
+
+# .app バンドル化を含む既定ビルド。
+# 旧来の `make build`（単体バイナリ）は build-bin に分離済み。
+# REPO_DIR を明示し、build_app_bundle.sh 内部で version_stamp.sh を呼ぶ。
+build: build-bin
+	@echo "==> build_app_bundle.sh (build/MacHealth.app)"
+	@bash scripts/lib/build_app_bundle.sh \
+	  build/MacHealth \
+	  src/Info.plist \
+	  build/MacHealth.app \
+	  "$(CURDIR)"
+	@ls -la build/MacHealth.app/Contents/MacOS/MacHealth build/MacHealth.app/Contents/Info.plist
+
+# 別名（.app を意識的に作る意図を表すための alias）。
+build-app: build
+
+# CI artifact 用 zip 化。
+# CFBundleVersion を読み出してファイル名に含める（macOS の defaults read を使う）。
+package: build
+	@echo "==> package build/MacHealth.app -> build/MacHealth-<version>.zip"
+	@v=$$(defaults read $(CURDIR)/build/MacHealth.app/Contents/Info CFBundleVersion); \
+	  zip_path=build/MacHealth-$$v.zip; \
+	  rm -f $$zip_path; \
+	  (cd build && zip -r -q "$$(basename $$zip_path)" MacHealth.app); \
+	  ls -la $$zip_path
+
+clean:
+	@echo "==> rm -rf build/"
+	@rm -rf build
+
+clean-app:
+	@echo "==> rm -rf build/MacHealth.app"
+	@rm -rf build/MacHealth.app
 
 install:
 	@echo "==> ./install.sh"

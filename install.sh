@@ -85,6 +85,11 @@ echo "▶ shallow clone ガード（CFBundleVersion fallback 警告）"
 bash "$REPO_DIR/scripts/lib/shallow_clone_guard.sh" "$REPO_DIR" || true
 
 # === 5. Swift ビルド & .app バンドル組立 ===
+# issue: 20260529_122727_Makefile_app化拡張 §B.4 で `.app` 組み立てロジックを
+# `scripts/lib/build_app_bundle.sh` に集約。本ブロックは内部で同スクリプトを
+# 呼び、出力先 $APP_DIR (= ~/Applications/MacHealth.app) は維持する。
+# CFBundleVersion の stamp も build_app_bundle.sh 内部で version_stamp.sh を
+# 呼ぶことで完了する（旧 §5.5 ブロックは廃止し、build_app_bundle.sh に集約）。
 echo ""
 echo "▶ Swift ビルド"
 cd "$INSTALL_DIR/src"
@@ -98,29 +103,34 @@ swiftc MacHealth.swift MetricsCollector.swift MenuBuilder.swift \
   "$REPO_DIR/Sources/MacHealthKit/ShellRunner.swift" \
   "$REPO_DIR/Sources/MacHealthKit/AppleScriptEscaper.swift" \
   "$REPO_DIR/Sources/MacHealthKit/JobController.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/AppBundlePolicy.swift" \
   "$REPO_DIR/Sources/MacHealthKit/Version.swift" \
   -o MacHealth
 echo "  ✅ ビルド完了 ($(ls -la MacHealth | awk '{print $5}') bytes)"
 
 echo ""
-echo "▶ .app バンドル組立: $APP_DIR"
-# 既存があれば一旦終了
+echo "▶ .app バンドル組立 + stamp: $APP_DIR"
+# 既存があれば一旦終了（旧 .app の MacOS バイナリを上書きするため）
 osascript -e 'quit app "Mac Health"' 2>/dev/null || true
 sleep 1
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-cp MacHealth  "$APP_DIR/Contents/MacOS/"
-cp Info.plist "$APP_DIR/Contents/"
-echo "  ✅ 配置完了"
-
-# === 5.5 CFBundleVersion を git 由来で stamp ===
-# issue: 20260529_105524_ビルド時バージョン自動stamp
-# cwd は $INSTALL_DIR/src（.git 不在）なので $REPO_DIR を明示的に渡すこと。
-echo ""
-echo "▶ CFBundleVersion を git 由来で stamp"
-if stamped=$(bash "$REPO_DIR/scripts/lib/version_stamp.sh" "$APP_DIR/Contents/Info.plist" "$REPO_DIR"); then
-  echo "  ✅ stamp 完了: $stamped"
+# build_app_bundle.sh が内部で:
+#   - mkdir Contents/{MacOS,Resources}
+#   - cp バイナリ・Info.plist
+#   - version_stamp.sh で CFBundleVersion stamp（REPO_DIR=$REPO_DIR）
+# を実行する。stdout に注入された CFBundleVersion を返す。
+if stamped=$(bash "$REPO_DIR/scripts/lib/build_app_bundle.sh" \
+  "$INSTALL_DIR/src/MacHealth" \
+  "$INSTALL_DIR/src/Info.plist" \
+  "$APP_DIR" \
+  "$REPO_DIR"); then
+  if [ -n "$stamped" ]; then
+    echo "  ✅ 配置完了 (CFBundleVersion=$stamped)"
+  else
+    echo "  ✅ 配置完了"
+  fi
 else
-  echo "  ⚠️  stamp 失敗（fallback 0.0.0-DEV のまま配布される可能性）"
+  echo "  ❌ .app 組み立て失敗（build_app_bundle.sh 非 0 終了）"
+  exit 1
 fi
 
 # === 6. LaunchAgent をロード ===
