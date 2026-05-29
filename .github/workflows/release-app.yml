@@ -132,42 +132,52 @@ jobs:
             "$CFBUNDLE_VERSION" \
             "$PWD"
 
-      - name: Upload .app.zip to Release
+      - name: Create Release with .app.zip attached (atomic)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.resolve_tag.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          # GitHub Actions の workflow_dispatch 経路では `github.ref` が dispatcher branch
-          # （refs/heads/main）になるため、リリース更新系の action が target_commitish を
-          # 上書きしようとして "release is immutable" で失敗する。
-          # `gh release upload` を直接使うことで target_commitish に触らず、
-          # 既存 Release（create-release.yaml が打った tag/Release）への asset 追加のみ行う。
-          # これは既存 Release（create-release.yaml が打った tag/Release）への
-          # asset 追加のみを行い、target_commitish には触らない。
-          zip_path="$ZIP_PATH"
-          echo "uploading $zip_path to release $TAG"
-          gh release upload "$TAG" "$zip_path" --clobber
+          # Immutable Releases (リポジトリ設定) 環境では、Release が作成された時点で
+          # asset/body 追加が拒否される。そのため `gh release create` で .app zip と
+          # release notes を同時に投入し、初回作成時に必要なものを全て埋め込む。
+          # create-release.yaml は tag 作成と本 workflow の dispatch のみを担当し、
+          # Release の作成は本 step で行う契約に変更した（hotfix #3）。
 
-          # Release notes に .app artifact 説明を追記（既存 body は維持）。
-          current_body=$(gh release view "$TAG" --json body -q '.body' || echo "")
-          # body が既に "## .app artifact" を含む場合は追記しない（再 dispatch のべき等性）。
-          if printf '%s' "$current_body" | grep -q '## .app artifact'; then
-            echo "release body already contains .app artifact section; skip append"
-          else
-            {
-              printf '%s\n\n' "$current_body"
-              printf '## .app artifact\n\n'
-              printf -- '- Filename: `%s`\n' "$ZIP_BASENAME"
-              printf -- '- CFBundleVersion: `%s`\n' "$CFBUNDLE_VERSION"
-              printf -- '- Built on: `macos-latest` via `.github/workflows/release-app.yml`\n\n'
-              printf '### Gatekeeper 回避（署名なし配布）\n\n'
-              printf '```bash\n'
-              printf 'xattr -dr com.apple.quarantine MacHealth.app\n'
-              printf '# または初回起動時に右クリック → 開く\n'
-              printf '```\n\n'
-              printf '> 本 artifact は署名・公証なしの開発用配布です。\n'
-            } > /tmp/release_notes.md
-            gh release edit "$TAG" --notes-file /tmp/release_notes.md
+          # release notes を一時ファイルに書き出す
+          notes_file=$(mktemp)
+          {
+            printf '## Mac Health Keeper %s\n\n' "$TAG"
+            printf 'macOS-latest CI でビルド・添付された `.app` artifact 入り Release。\n\n'
+            printf '## .app artifact\n\n'
+            printf -- '- Filename: `%s`\n' "$ZIP_BASENAME"
+            printf -- '- CFBundleVersion: `%s`\n' "$CFBUNDLE_VERSION"
+            printf -- '- Built on: `macos-latest` via `.github/workflows/release-app.yml`\n\n'
+            printf '### Gatekeeper 回避（署名なし配布）\n\n'
+            printf '```bash\n'
+            printf 'xattr -dr com.apple.quarantine MacHealth.app\n'
+            printf '# または初回起動時に右クリック → 開く\n'
+            printf '```\n\n'
+            printf '> 本 artifact は署名・公証なしの開発用配布です。\n'
+          } > "$notes_file"
+
+          # 既に同 tag の Release が存在する場合（hotfix 経路や手動再実行）はスキップ。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; cannot mutate (immutable). skipping create."
+            # 既存 Release が asset 0 件なら警告を残す（手動対応が必要）。
+            asset_count=$(gh release view "$TAG" --json assets -q '.assets | length')
+            if [ "$asset_count" -eq 0 ]; then
+              echo "::warning::existing immutable release $TAG has 0 assets and cannot be backfilled by CI"
+            fi
+            exit 0
           fi
+
+          # Release を新規作成（生成 notes + .app zip を同時に投入）。
+          # --target は tag の指し示す commit (= main 直前 commit) と一致させる。
+          target_sha="$(git rev-parse "$TAG^{commit}")"
+          echo "creating release $TAG (target=$target_sha) with $ZIP_PATH"
+          gh release create "$TAG" "$ZIP_PATH" \
+            --target "$target_sha" \
+            --title "$TAG" \
+            --notes-file "$notes_file"

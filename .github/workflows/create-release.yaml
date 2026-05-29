@@ -24,7 +24,7 @@ jobs:
       - name: リポジトリのチェックアウト
         uses: actions/checkout@v4
 
-      - name: タグ作成と Release 公開
+      - name: タグ作成
         id: create_tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,12 +33,16 @@ jobs:
           TAG="v$(TZ=Asia/Tokyo date '+%Y%m%d.%H%M%S')"
           git tag "$TAG"
           git push origin "$TAG"
-          gh release create "$TAG" --generate-notes
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       # issue: 20260529_123114_CIバージョンstamp_B案実装（B 案）
-      # 役割分離: tag/Release 生成は本 workflow（ubuntu-latest）、
-      #          .app artifact 組み立て + 添付は release-app.yml（macos-latest）。
+      # 役割分離: tag 生成は本 workflow（ubuntu-latest）、
+      #          .app artifact 組み立て + Release 作成 + 添付は release-app.yml（macos-latest）。
+      # Release 作成を release-app.yml に移譲した理由:
+      #   - Immutable Releases (リポジトリ設定) では Release 作成時に asset を含めないと
+      #     後から添付できない（HTTP 422 Cannot upload assets to an immutable release）。
+      #   - そのため Release 作成と asset 添付を release-app.yml の単一 step で
+      #     atomic に行う必要がある。
       # GITHUB_TOKEN で作成した tag は他 workflow を起動しないため、
       # ここから明示的に workflow_dispatch で release-app.yml を呼び出す。
       - name: .app artifact 添付ワークフローを起動
