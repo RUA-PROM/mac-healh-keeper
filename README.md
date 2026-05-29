@@ -45,6 +45,21 @@ cd mac-health-keeper
 ./install.sh
 ```
 
+> **注意（shallow clone について）**
+> `git clone --depth=1`（または `--shallow-since` / `--shallow-exclude`）でリポジトリを **shallow clone** すると、tag 履歴が取得されず `git describe --tags --always` が失敗するため、`./install.sh` が `~/Applications/MacHealth.app` の `CFBundleVersion` を `0.0.0-DEV` の fallback 値で stamp します。
+>
+> 対応方法はいずれかひとつ：
+>
+> - **推奨**: 上記のように **shallow オプションを付けずに** clone する（full clone）。
+> - すでに shallow clone してしまった場合は、`./install.sh` 実行前に次を実行する：
+>   ```bash
+>   git fetch --tags --unshallow
+>   ```
+> - 上記コマンドを忘れても、`install.sh` は実行時に shallow 状態を自動検出し、stderr に警告と推奨手順を表示します（[`scripts/lib/shallow_clone_guard.sh`](scripts/lib/shallow_clone_guard.sh)）。さらに次のように環境変数を指定すれば、`install.sh` が **自動で `git fetch --tags --unshallow` を実行**します：
+>   ```bash
+>   MACHEALTH_AUTO_UNSHALLOW=1 ./install.sh
+>   ```
+
 インストーラがやってくれること：
 1. 環境チェック（macOS / Swift）
 2. スクリプトを `~/.local/bin/mac-health/` に配置

@@ -91,7 +91,8 @@ test-shell:
 		  && bash scripts/test/version_stamp_test.sh \
 		  && bash scripts/test/launchagent_lifecycle_test.sh \
 		  && bash scripts/test/plist_validator_test.sh \
-		  && bash scripts/test/launchagent_doctor_test.sh; \
+		  && bash scripts/test/launchagent_doctor_test.sh \
+		  && bash scripts/test/shallow_clone_guard_test.sh; \
 	fi
 
 # ------------------------------------------------------------------
