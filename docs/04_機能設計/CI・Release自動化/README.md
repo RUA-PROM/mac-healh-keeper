@@ -110,6 +110,27 @@ sequenceDiagram
 - ワークフロー自体は GitHub 側の機能であり、ローカルから単体テストは行わない。
 - 検証は **「PR 作成時に check ワークフローが成功する」「`main` マージ後に Release が公開されタグが付く」** という結果で確認する。
 
+## バージョン stamp の責務分離
+
+issue: 20260529_105524_ビルド時バージョン自動stamp（v1.3.0〜）で `CFBundleVersion` を git 由来値で自動 stamp する経路を追加した。CI 側は本変更で**何も変えていない**。設計上の責務分離は以下の通り。
+
+| 経路 | 役割 | stamp 実行 |
+| ---- | ---- | ---------- |
+| `.github/workflows/create-release.yaml`（`ubuntu-latest`） | JST 日時タグ（`vYYYYMMDD.HHMMSS`）を push し `gh release create --generate-notes` で Release を公開する。`CFBundleVersion` には触れない。 | **しない** |
+| `install.sh`（ローカル macOS） | `.app/Contents/Info.plist` を組み立てた直後に `bash "$REPO_DIR/scripts/lib/version_stamp.sh" "$APP_DIR/Contents/Info.plist" "$REPO_DIR"` を呼び、`git -C "$REPO_DIR" describe --tags --always` を `plutil -replace CFBundleVersion -string` で注入する。 | **する** |
+| `Makefile`（`make build`） | `build/MacHealth` バイナリのみ生成し `.app` を作らないため、stamp 対象が存在しない。 | **しない** |
+
+### CI で stamp しない理由
+
+- `create-release.yaml` は **`ubuntu-latest` runner** で動作し、`plutil` が利用できない（`plutil` は macOS native）。仮に `apt install` 系で代替を入れる場合も plist 構造の取り扱いが煩雑になる。
+- 本機能の配布形態は「`git clone` → `./install.sh`」のローカルビルドであり、`.app` を組み立てるのは常に macOS 上の `install.sh` 経路に限定される。CI は tag を打って Release を公開するだけで、`.app` の組立・配布を行わない（バイナリアセットも添付しない）。
+- したがって CI 側で stamp する必要がなく、ローカル `install.sh` 経由でのみ `git describe --tags --always` の値を `CFBundleVersion` に注入する設計とする。
+
+### CI fetch-depth について
+
+- 本機能では CI 側で `git describe` を呼ばないため、`actions/checkout@v4` の既定 `fetch-depth: 1` のままで影響なし。
+- 将来 CI 側で semver タグ抽出・stamp 等を行う場合は `fetch-depth: 0` を要設定（別 issue で対応する）。
+
 ## 既知の制約
 
 - **CI runner の `shellcheck` 同梱状況**は時期によって変動する。`check.yml` は不在時に `brew install shellcheck` でフォールバックするが、Homebrew の障害時は CI 自体が失敗する。`brew` 障害は GitHub の status を確認して再 push する運用とする。

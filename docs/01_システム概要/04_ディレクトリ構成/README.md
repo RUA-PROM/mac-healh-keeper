@@ -34,7 +34,8 @@ mac-health-keeper/
 │   │   ├── Metrics.swift
 │   │   ├── AppleScriptEscaper.swift
 │   │   ├── ShellRunner.swift
-│   │   └── JobController.swift
+│   │   ├── JobController.swift
+│   │   └── Version.swift                  # v1.3.0 追加: About 末尾行フォーマッタ（純粋関数）
 │   └── MacHealthCheck/        # v1.3.0 追加: XCTest 非依存の executable test runner
 │       ├── main.swift
 │       └── TestRunner.swift
@@ -44,7 +45,7 @@ mac-health-keeper/
 │   ├── bin/                   # 実行スクリプト・CLI（launchd 起動対象）
 │   ├── lib/                   # 共通ユーティリティ（log/notify/metrics/lock）
 │   ├── config/                # 編集可能な設定値（thresholds.sh）
-│   ├── test/                  # シェルのテスト（bats / *_test.sh・install_metrics_smoke_test.sh）
+│   ├── test/                  # シェルのテスト（bats / *_test.sh・install_metrics_smoke_test.sh・version_stamp_test.sh）
 │   └── lint/                  # lint/format/cycle/security ランナー（make check から呼ぶ）
 ├── launchagents/              # launchd ジョブ定義テンプレート（*.plist.template）
 ├── .github/
@@ -179,7 +180,8 @@ mac-health-keeper/
 │   │   ├── Metrics.swift                               #   MetricsSnapshot（collectorErrors を含む・v1.3.0 拡張）/ JobStatus（純粋値型）
 │   │   ├── AppleScriptEscaper.swift                    #   osascript argv 渡し（案A）+ 文字列エスケープ（案B）
 │   │   ├── ShellRunner.swift                           #   protocol ShellRunner + ZshShellRunner（引数配列・Process）
-│   │   └── JobController.swift                         #   CQRS: isLoaded(query) / load/unload/toggle/enableAll/disableAll(command)
+│   │   ├── JobController.swift                         #   CQRS: isLoaded(query) / load/unload/toggle/enableAll/disableAll(command)
+│   │   └── Version.swift                               #   v1.3.0: About 末尾行フォーマッタ（formatAboutVersionLine 純粋関数 / nil・空文字で "バージョン 不明"）
 │   └── MacHealthCheck/                                 # v1.3.0: XCTest 非依存の executable test runner
 │       ├── main.swift                                  #   エントリポイント。失敗時 exit(1)
 │       └── TestRunner.swift                            #   BDD アサーション本体（MetricsCollectorPolicy / errorBannerSpecs / MetricsParser）
@@ -208,14 +210,16 @@ mac-health-keeper/
 │   │   ├── log.sh                                      #   log / log_event / rotate_logs / finalize_job / record_rotation_error
 │   │   ├── notify.sh                                   #   notify（osascript） / is_business_hours
 │   │   ├── metrics.sh                                  #   metrics_parse_* + metrics_*_raw/mb/gb + dispatch CLI
-│   │   └── lock.sh                                     #   acquire_lock / release_lock / with_lock（mkdir ベース）
+│   │   ├── lock.sh                                     #   acquire_lock / release_lock / with_lock（mkdir ベース）
+│   │   └── version_stamp.sh                            #   v1.3.0: install.sh 経由で CFBundleVersion を git describe --tags --always で stamp
 │   ├── config/
 │   │   └── thresholds.sh                               #   閾値・ローテート・cooldown の編集可能設定
 │   ├── test/
 │   │   ├── log_rotate.bats / log_rotate_test.sh        #   needs_rotation / next_generation / rotate_file
 │   │   ├── metrics.bats   / metrics_test.sh            #   metrics_parse_* / metrics_uptime_*
 │   │   ├── monitor.bats   / monitor_test.sh            #   should_notify / classify_pressure / exceeds_threshold
-│   │   └── install_metrics_smoke_test.sh               #   v1.3.0: scripts/lib/metrics.sh の物理存在・install.sh の cp 範囲・コピー後の bash 経路
+│   │   ├── install_metrics_smoke_test.sh               #   v1.3.0: scripts/lib/metrics.sh の物理存在・install.sh の cp 範囲・コピー後の bash 経路
+│   │   └── version_stamp_test.sh                       #   v1.3.0: version_stamp.sh の smoke（git describe 一致 / 非 git fallback / 引数欠落 / 不正 plist）
 │   └── lint/                                           # lint/format/cycle/security ランナー（make check から呼ぶ）
 │       ├── lib/common.sh                               #   ログ出力・ツール検出・対象ファイル列挙・リポジトリルート解決（bash 3.2 互換）
 │       ├── run-shellcheck.sh                           #   shellcheck 実行（必須・-x --severity=warning）
@@ -266,7 +270,7 @@ mac-health-keeper/
 | `src/MacHealth.swift` | `AppDelegate` + `@main MacHealthMain`。メニューバー UI とユーザー操作の調整役。各層へ委譲し自身はロジックを持たない。 | `applicationDidFinishLaunching` / `setStatusIcon` / `refreshMetricsAsync` / `rebuildMenu` / `refreshNow` / `quickAppRefresh` / `quickPurge` / `quickMemoryPressure` / `quickDockerQuit` / `toggleJob` / `runJob` / `pauseAllJobs` / `resumeAllJobs` / `openEventsLog` / `openMonitorLog` / `openLog(path:)` / `testNotification` / `showMetricsHelp` / `showAbout` / `notify(_:)` |
 | `src/MenuBuilder.swift` | `[MenuItemSpec]` を NSMenu/NSMenuItem に変換する薄い AppKit 部。`MenuAction → Selector` の 1 対 1 マップ。 | `makeMenu(_:target:) -> NSMenu` / `Self.selector(for:)` / `NSMenuItem.toptip(_:)` |
 | `src/MetricsCollector.swift` | 実コマンドを実行し `MetricsParser` に委譲して `MetricsSnapshot` を組み立てる（Imperative Shell）。`metrics.sh <metric>` 引数呼び出し + boot epoch / compressor 生ページ / docker count の 3 箇所のみ `shellFixed` で固定文字列残置。 | `metric(_:) -> String` / `shellFixed(_:) -> String` / `collect() -> MetricsSnapshot` |
-| `src/Info.plist` | アプリの Info.plist。`CFBundleIdentifier=com.github.adachi-tatsuru.machealth.app`、`LSUIElement=true`、`LSMinimumSystemVersion=11.0`、`CFBundleVersion=1.3` / `CFBundleShortVersionString=1.3`（アプリバージョンの正本。docs / About アラート文言はこれに追従）。 | — |
+| `src/Info.plist` | アプリの Info.plist。`CFBundleIdentifier=com.github.adachi-tatsuru.machealth.app`、`LSUIElement=true`、`LSMinimumSystemVersion=11.0`、`CFBundleShortVersionString=1.3`（ユーザー向け semver の正本。手動 bump）、`CFBundleVersion=0.0.0-DEV`（テンプレ値。`install.sh` 経由で `scripts/lib/version_stamp.sh` が `git -C "$REPO_DIR" describe --tags --always` を `plutil -replace` で注入。`docs/` / About アラート文言は `CFBundleShortVersionString` に追従）。 | — |
 
 ### 4.8.2. `Sources/MacHealthKit/`（Domain + Infra・Foundation のみ）
 
@@ -281,6 +285,7 @@ mac-health-keeper/
 | `AppleScriptEscaper.swift` | osascript への安全な値渡し。argv 渡し（推奨）と AppleScript リテラルエスケープ（フォールバック）。 | `notificationArgs(message:title:) -> (executable, args)` / `escapeForAppleScriptLiteral(_:) -> String` |
 | `ShellRunner.swift` | `protocol ShellRunner` と既定実装 `ZshShellRunner`。`Process.executableURL + arguments` で引数配列のまま起動しシェル再パースを排除。失敗時 `""` を返す（現状互換）。 | `protocol ShellRunner.run(_:_:) -> String` / `final class ZshShellRunner` |
 | `JobController.swift` | CQRS で `launchctl` を扱う。`isLoaded(job:)` は `launchctl list` を読み Swift 側でリテラル比較（query）。`load`/`unload`/`toggle`/`enableAll`/`disableAll` は bootstrap/bootout（失敗時 load/unload フォールバック）または CLI 呼出（command）。 | `isLoaded(job:)` / `load(job:)` / `unload(job:)` / `toggle(job:wasLoaded:)` / `enableAll()` / `disableAll()` / 内部 `bootstrapSucceeded(_:)` |
+| `Version.swift` | v1.3.0 追加。About アラート末尾行「バージョン X.Y」を生成する純粋関数。`Bundle.main.infoDictionary["CFBundleShortVersionString"]` から取得した値（nil 許容）を受け、非 nil・非空なら `"バージョン \(v)"`、それ以外は `"バージョン 不明"` を返す。 | `formatAboutVersionLine(_ shortVersion: String?) -> String` |
 
 ### 4.8.3. `scripts/bin/`（実行スクリプト・CLI）
 
@@ -301,6 +306,7 @@ mac-health-keeper/
 | `scripts/lib/notify.sh` | osascript によるデスクトップ通知発行と業務時間判定。 | `notify <title> <message> [subtitle]` / `is_business_hours`（08:00-21:59） |
 | `scripts/lib/metrics.sh` | メトリクス取得の集約。純粋パース関数 `metrics_parse_*` と実コマンドラッパ `metrics_*_*`。`BASH_SOURCE` 判定で直接実行時のみ dispatch（Swift から `metrics.sh <metric>` で呼ぶ）。 | 純粋: `metrics_parse_swap_mb` / `metrics_parse_swap_raw` / `metrics_parse_compressed_gb` / `metrics_parse_load_1m` / `metrics_parse_load_1m_raw` / `metrics_parse_free_pct` / `metrics_uptime_days` / `metrics_uptime_hours`。ラッパ: `metrics_swap_used_mb` / `metrics_swap_used_raw` / `metrics_compressed_gb` / `metrics_load_1m` / `metrics_load_1m_raw` / `metrics_memory_free_pct` / `metrics_uptime_days_now` / `metrics_uptime_hours_now` / `metrics_docker_status`。dispatch: `load`/`swap`/`free`/`compressed`/`uptime_days`/`uptime_hours`/`docker` |
 | `scripts/lib/lock.sh` | mkdir ベースの排他制御。`$LOG_DIR/.locks/<name>.lock` をロックパスにする固定方式。ロック取得失敗時はベストエフォートで継続。 | `_lock_base_dir` / `acquire_lock <name> [timeout_sec]` / `release_lock <name>` / `with_lock <name> <command...>` |
+| `scripts/lib/version_stamp.sh` | v1.3.0 追加。`.app/Contents/Info.plist` の `CFBundleVersion` キーに `git -C "$REPO_DIR" describe --tags --always` の値を `plutil -replace` で注入する。引数: `$1`=stamp 対象 plist、`$2` または `$REPO_DIR`=git ルート。git describe 失敗時は fallback `0.0.0-DEV` のまま終了コード 0。`install.sh` 経由でのみ呼ばれる（Makefile / CI からは呼ばない）。 | `usage` / `set -euo pipefail` / `git -C $repo_dir describe --tags --always` / `plutil -replace CFBundleVersion -string <derived> $staged_plist` |
 
 ### 4.8.5. `scripts/config/`
 
@@ -316,6 +322,7 @@ mac-health-keeper/
 | `metrics.bats` / `metrics_test.sh` | `metrics_parse_*` / `metrics_uptime_*` の純粋ロジック検証。 |
 | `log_rotate.bats` / `log_rotate_test.sh` | `needs_rotation` / `next_generation` / `rotate_file` の検証。 |
 | `install_metrics_smoke_test.sh` | v1.3.0 追加。リポジトリ側 `scripts/lib/metrics.sh` の物理存在・`install.sh` の `cp -R scripts/lib/.` 行の残存・一時 HOME へコピー後の `bash metrics.sh load/swap/free` が空文字以外を返すことを smoke 検証する（UC6-S1〜S3）。`make test-shell` のフォールバック経路で必ず実行される。 |
+| `version_stamp_test.sh` | v1.3.0 追加（issue: 20260529_105524_ビルド時バージョン自動stamp）。`scripts/lib/version_stamp.sh` の挙動を smoke 検証する。観点: ① 通常 git リポジトリで stamp 後 `CFBundleVersion` が `git describe --tags --always` と一致、② 非 git ディレクトリでは fallback `0.0.0-DEV` を維持し終了コード 0、③ 引数欠落 → 終了コード 2 / usage 出力、④ 存在しない plist → 終了コード 1。`make test-shell` のフォールバック経路で必ず実行される。 |
 
 ### 4.8.6a. `scripts/lint/`（lint・format・cycle・security ランナー）
 

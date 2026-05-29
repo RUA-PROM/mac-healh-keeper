@@ -49,7 +49,7 @@ flowchart TD
 | `lint-swiftlint` | `scripts/lint/run-swiftlint.sh` | `cd repo_root` | 任意 | rc 0/1 | `--strict` |
 | `check-cycles` | `scripts/lint/check-source-cycles.sh` | `list_shell_files()` | 必須 | 循環検出で非 0 | awk DFS（色塗り） |
 | `security-scan` | `scripts/lint/security-scan.sh` | `list_shell_files()` + `list_swift_files()` | 必須 | 検出で非 0 | 6 種パターン |
-| `test` | `make test` 委譲 | — | 必須 | ① `swift run MacHealthCheck`（v1.3.0 追加・必須・常時実行）→ ② `swift test`（XCTest 搭載時のみ・不在は SKIP）→ ③ シェルテスト（`bats` または自前 `*_test.sh` + `install_metrics_smoke_test.sh`）の合算結果（合計 81 件） | MacHealthCheck・シェルは必須 / XCTest 不在は SKIP |
+| `test` | `make test` 委譲 | — | 必須 | ① `swift run MacHealthCheck`（v1.3.0 追加・必須・常時実行）→ ② `swift test`（XCTest 搭載時のみ・不在は SKIP）→ ③ シェルテスト（`bats` または自前 `*_test.sh` + `install_metrics_smoke_test.sh` + `version_stamp_test.sh`（v1.3.0・issue: 20260529_105524_ビルド時バージョン自動stamp 追加））の合算結果 | MacHealthCheck・シェルは必須 / XCTest 不在は SKIP |
 
 ### `list_shell_files` の対象範囲
 

@@ -87,7 +87,8 @@ test-shell:
 		bash scripts/test/monitor_test.sh \
 		  && bash scripts/test/metrics_test.sh \
 		  && bash scripts/test/log_rotate_test.sh \
-		  && bash scripts/test/install_metrics_smoke_test.sh; \
+		  && bash scripts/test/install_metrics_smoke_test.sh \
+		  && bash scripts/test/version_stamp_test.sh; \
 	fi
 
 # ------------------------------------------------------------------
@@ -158,6 +159,7 @@ build:
 	  Sources/MacHealthKit/ShellRunner.swift \
 	  Sources/MacHealthKit/AppleScriptEscaper.swift \
 	  Sources/MacHealthKit/JobController.swift \
+	  Sources/MacHealthKit/Version.swift \
 	  -o build/MacHealth
 	@ls -la build/MacHealth
 

@@ -216,7 +216,7 @@ flowchart TD
 | ---- | ---- |
 | 発生条件 | `showAbout` |
 | messageText | `Mac Health Keeper` |
-| informativeText | `再起動なしで再起動相当の状態を保つ\n自動メンテナンスシステム\n\n• メモリ／負荷監視（5分毎）\n• Dockerアイドル監視（10分毎）\n• 長期稼働の通知（毎日 9:00）\n• アプリ自動再起動（毎日 3:00）\n\nバージョン 1.3`（`src/Info.plist::CFBundleShortVersionString` と同期） |
+| informativeText | `再起動なしで再起動相当の状態を保つ\n自動メンテナンスシステム\n\n• メモリ／負荷監視（5分毎）\n• Dockerアイドル監視（10分毎）\n• 長期稼働の通知（毎日 9:00）\n• アプリ自動再起動（毎日 3:00）\n\nバージョン <CFBundleShortVersionString 動的取得値>`（`Bundle.main.infoDictionary["CFBundleShortVersionString"]` から `formatAboutVersionLine(_:)` 経由で動的取得。取得失敗時は `バージョン 不明` にフォールバック） |
 | alertStyle | `.informational` |
 | ボタン | `OK` |
 

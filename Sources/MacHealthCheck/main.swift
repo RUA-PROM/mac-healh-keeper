@@ -197,6 +197,49 @@ useCase("MetricsParser が空文字入力に対してフォールバック値 \"
     }
 }
 
+// MARK: - UC: formatAboutVersionLine（About アラート末尾行のフォーマッタ）
+//
+// issue: 20260529_105524_ビルド時バージョン自動stamp
+// 01_要件定義.md UC4 / UC5 に対応。
+// Bundle.main.infoDictionary の動的取得は副作用付きで単体スタブ困難のため、
+// 純粋関数 formatAboutVersionLine のみを対象とする（infoDictionary が nil を返す経路は手動確認）。
+
+useCase("formatAboutVersionLine が CFBundleShortVersionString から About アラート末尾行を生成する") {
+
+    scenario("非 nil・非空の semver が渡されたとき「バージョン X.Y」を返す") {
+        // Given: semver 文字列 "1.3"
+        let v: String? = "1.3"
+
+        // When: formatAboutVersionLine を呼ぶ
+        let line = formatAboutVersionLine(v)
+
+        // Then: 「バージョン 1.3」を返す
+        assertEqual(line, "バージョン 1.3", "正常系: semver がそのまま埋め込まれる")
+    }
+
+    scenario("nil が渡されたとき fallback「バージョン 不明」を返す") {
+        // Given: Bundle.main.infoDictionary が CFBundleShortVersionString を持たない状況を模擬
+        let v: String? = nil
+
+        // When: formatAboutVersionLine を呼ぶ
+        let line = formatAboutVersionLine(v)
+
+        // Then: fallback 文言を返す
+        assertEqual(line, "バージョン 不明", "nil 入力時は \"不明\" にフォールバック")
+    }
+
+    scenario("空文字列が渡されたとき fallback「バージョン 不明」を返す") {
+        // Given: CFBundleShortVersionString が空文字（プロビジョニング異常等）
+        let v: String? = ""
+
+        // When: formatAboutVersionLine を呼ぶ
+        let line = formatAboutVersionLine(v)
+
+        // Then: fallback 文言を返す（空文字を素通ししない）
+        assertEqual(line, "バージョン 不明", "空文字入力時は \"不明\" にフォールバック")
+    }
+}
+
 // MARK: - 集計と終了
 
 CheckRunner.shared.finishAndExit()
