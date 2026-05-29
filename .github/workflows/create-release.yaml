@@ -8,6 +8,9 @@ on:
 
 permissions:
   contents: write
+  # `gh workflow run release-app.yml` で workflow_dispatch を発火するために必要。
+  # 参考: https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+  actions: write
 
 concurrency:
   group: release
