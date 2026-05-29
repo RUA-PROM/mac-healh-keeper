@@ -102,19 +102,23 @@ assert_grep_file "make check" "$RELEASE_APP_YML" "UC1-S4: make check ステッ�
 assert_grep_file "scripts/lib/release_artifact_validator.sh" "$RELEASE_APP_YML" \
   "UC1-S5: release_artifact_validator.sh 呼び出しが存在"
 
-# シナリオ: gh release upload で build/MacHealth-*.zip を Release に添付する。
+# シナリオ: gh release create で build/MacHealth-*.zip を Release 作成と同時に添付する。
 # Given: release-app.yml
-# When: 'gh release upload' と zip path 参照を grep する
+# When: 'gh release create' と zip path 参照を grep する
 # Then: 両方ヒットする
-# 設計判断: softprops/action-gh-release@v2 は workflow_dispatch 時に target_commitish を
-# 上書きしようとして "release is immutable" エラーになるため、gh release upload を直接使う。
-assert_grep_file "gh release upload" "$RELEASE_APP_YML" \
-  "UC1-S6: gh release upload で artifact 添付"
+# 設計判断: Immutable Releases (リポジトリ設定) では Release 作成時に asset を含めないと
+# 後から添付できない (HTTP 422)。release-app.yml が Release 作成と asset 添付を
+# atomic に行う契約に変更（softprops/action-gh-release も gh release upload も使わない）。
+assert_grep_file "gh release create" "$RELEASE_APP_YML" \
+  "UC1-S6: gh release create で Release 作成 + artifact 添付を atomic に実行"
 assert_grep_file "ZIP_PATH" "$RELEASE_APP_YML" \
   "UC1-S6: ZIP_PATH 環境変数で zip パスを引き渡し"
-# 既存 Release を尊重（target_commitish に触らない）ため、softprops/action-gh-release は使わない契約。
+# softprops/action-gh-release は使わない契約
 assert_not_grep_file "softprops/action-gh-release" "$RELEASE_APP_YML" \
   "UC1-S6: softprops/action-gh-release は使わない（immutable release 対策）"
+# --target を渡して target_commitish の不整合（refs/heads/main へのデフォルト fallback）を防ぐ
+assert_grep_file "\-\-target" "$RELEASE_APP_YML" \
+  "UC1-S6: gh release create に --target を指定（tag commit に固定）"
 
 # シナリオ: permissions: contents: write を最小権限で明示している。
 # Given: release-app.yml
@@ -151,8 +155,13 @@ assert_not_grep_file "runs-on: macos-latest" "$CREATE_RELEASE_YML" \
 # Then: ヒットする（タグ命名規約は変更しない契約）
 assert_grep_file "TZ=Asia/Tokyo date" "$CREATE_RELEASE_YML" \
   "UC2-S2: 既存 tag 命名（vYYYYMMDD.HHMMSS）が維持されている"
-assert_grep_file "gh release create" "$CREATE_RELEASE_YML" \
-  "UC2-S2: gh release create 経路が維持されている"
+# Release 作成は release-app.yml に移譲したため、create-release.yaml は gh release create を呼ばない（immutable release 対策）。
+assert_not_grep_file "gh release create" "$CREATE_RELEASE_YML" \
+  "UC2-S2: create-release.yaml は gh release create を呼ばない（release-app.yml に移譲）"
+assert_grep_file "git tag" "$CREATE_RELEASE_YML" \
+  "UC2-S2: create-release.yaml は git tag 作成のみ担当"
+assert_grep_file "git push origin" "$CREATE_RELEASE_YML" \
+  "UC2-S2: create-release.yaml は tag push を担当"
 
 # シナリオ: release-app.yml を workflow_dispatch で起動する step が追加されている。
 # Given: create-release.yaml
