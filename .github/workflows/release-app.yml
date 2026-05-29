@@ -1,0 +1,158 @@
+# Mac Health Keeper - Release artifact (.app zip) attach workflow
+#
+# issue: 20260529_123114_CIバージョンstamp_B案実装（3D667BE0-934D-4FC6-B7D0-C423CF45B03F）
+#
+# 役割:
+#   既存 `create-release.yaml`（ubuntu-latest）が日時 tag を作成するのを契機に、
+#   本 workflow（macos-latest）が `.app` を組み立て・package し、生成された
+#   `MacHealth-<version>.zip` を Release artifact として添付する。
+#
+# 設計判断:
+#   - 既存 `create-release.yaml` の振る舞いは変えない（最小修正・役割分離）。
+#   - trigger は tag push（`v*`）。tag-on-push の連鎖はループ防止のため
+#     `push: branches: [main]` ではなく `push: tags`。create-release.yaml が
+#     `git push origin <TAG>` した時点で本 workflow が起動する。
+#   - actions/checkout は `fetch-depth: 0` + `fetch-tags: true`（tag 履歴必須）。
+#   - artifact 検証は scripts/lib/release_artifact_validator.sh で
+#     CFBundleVersion = git describe 期待値の厳格一致を確認。
+#   - artifact 添付は softprops/action-gh-release@v2 を使用。
+
+name: Release artifact (.app)
+
+on:
+  push:
+    tags:
+      - "v*"
+  # ローカル/手動デバッグ用の手動起動経路も用意（既存 release を上書きしないよう注意）
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "添付対象の既存 tag（例: v20260529.210908）。tag push 経路と排他で使う。"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-app-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-attach:
+    name: Build .app and attach to Release
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve target tag
+        id: resolve_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            # push: tags 経路。github.ref は refs/tags/<tag>
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "ERROR: failed to resolve target tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "target tag: $tag"
+
+      - name: Checkout repository (with full history and tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ steps.resolve_tag.outputs.tag }}
+
+      - name: Ensure shellcheck
+        shell: bash
+        run: |
+          set -eo pipefail
+          if command -v shellcheck >/dev/null 2>&1; then
+            echo "shellcheck already available: $(shellcheck --version | head -n1 | awk '{print $2}')"
+          else
+            echo "shellcheck not found; installing via Homebrew"
+            brew install shellcheck
+          fi
+
+      - name: Verify git describe (shallow clone guard)
+        shell: bash
+        run: |
+          set -euo pipefail
+          desc="$(git describe --tags --always)"
+          echo "git describe --tags --always: $desc"
+          if [ "$desc" = "0.0.0-DEV" ]; then
+            echo "::warning::git describe fell back to 0.0.0-DEV; check fetch-depth/fetch-tags"
+          fi
+          # 期待 tag が含まれるか（resolve_tag の出力と比較）。
+          expected="${{ steps.resolve_tag.outputs.tag }}"
+          case "$desc" in
+            "$expected"*) echo "git describe starts with target tag: ok" ;;
+            *) echo "::warning::git describe ($desc) does not start with target tag ($expected)" ;;
+          esac
+
+      - name: Run make check (regression guard)
+        shell: bash
+        run: make check
+
+      - name: Build .app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          make build
+          ls -la build/MacHealth.app/Contents/MacOS/MacHealth build/MacHealth.app/Contents/Info.plist
+          # CFBundleVersion をログに出す
+          cfv="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' build/MacHealth.app/Contents/Info.plist)"
+          echo "CFBundleVersion: $cfv"
+          echo "CFBUNDLE_VERSION=$cfv" >> "$GITHUB_ENV"
+
+      - name: Package .app -> zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          make package
+          ls -la build/MacHealth-*.zip
+          # 添付対象 zip パスを GITHUB_ENV に書き出す
+          zip_path="$(ls build/MacHealth-*.zip | head -n1)"
+          echo "ZIP_PATH=$zip_path" >> "$GITHUB_ENV"
+          echo "ZIP_BASENAME=$(basename "$zip_path")" >> "$GITHUB_ENV"
+
+      - name: Validate release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/lib/release_artifact_validator.sh \
+            "$ZIP_PATH" \
+            "$CFBUNDLE_VERSION" \
+            "$PWD"
+
+      - name: Upload .app.zip to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve_tag.outputs.tag }}
+          files: build/MacHealth-*.zip
+          fail_on_unmatched_files: true
+          # 既存 Release の本文・assets は維持する（create-release.yaml で生成済み）
+          append_body: true
+          body: |
+            ## .app artifact
+
+            - Filename: `${{ env.ZIP_BASENAME }}`
+            - CFBundleVersion: `${{ env.CFBUNDLE_VERSION }}`
+            - Built on: `macos-latest` via `.github/workflows/release-app.yml`
+
+            ### Gatekeeper 回避（署名なし配布）
+
+            ```bash
+            xattr -dr com.apple.quarantine MacHealth.app
+            # または初回起動時に右クリック → 開く
+            ```
+
+            > 本 artifact は署名・公証なしの開発用配布です。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
