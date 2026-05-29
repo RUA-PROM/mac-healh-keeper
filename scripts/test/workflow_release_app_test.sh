@@ -102,14 +102,19 @@ assert_grep_file "make check" "$RELEASE_APP_YML" "UC1-S4: make check ステッ�
 assert_grep_file "scripts/lib/release_artifact_validator.sh" "$RELEASE_APP_YML" \
   "UC1-S5: release_artifact_validator.sh 呼び出しが存在"
 
-# シナリオ: softprops/action-gh-release@v2 で build/MacHealth-*.zip を添付する。
+# シナリオ: gh release upload で build/MacHealth-*.zip を Release に添付する。
 # Given: release-app.yml
-# When: action と files: パターンを grep する
+# When: 'gh release upload' と zip path 参照を grep する
 # Then: 両方ヒットする
-assert_grep_file "softprops/action-gh-release@v2" "$RELEASE_APP_YML" \
-  "UC1-S6: softprops/action-gh-release@v2 を使用"
-assert_grep_file "files: build/MacHealth-\*.zip" "$RELEASE_APP_YML" \
-  "UC1-S6: files: build/MacHealth-*.zip を添付"
+# 設計判断: softprops/action-gh-release@v2 は workflow_dispatch 時に target_commitish を
+# 上書きしようとして "release is immutable" エラーになるため、gh release upload を直接使う。
+assert_grep_file "gh release upload" "$RELEASE_APP_YML" \
+  "UC1-S6: gh release upload で artifact 添付"
+assert_grep_file "ZIP_PATH" "$RELEASE_APP_YML" \
+  "UC1-S6: ZIP_PATH 環境変数で zip パスを引き渡し"
+# 既存 Release を尊重（target_commitish に触らない）ため、softprops/action-gh-release は使わない契約。
+assert_not_grep_file "softprops/action-gh-release" "$RELEASE_APP_YML" \
+  "UC1-S6: softprops/action-gh-release は使わない（immutable release 対策）"
 
 # シナリオ: permissions: contents: write を最小権限で明示している。
 # Given: release-app.yml
