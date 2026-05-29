@@ -3,20 +3,12 @@
 #
 # issue: 20260529_083530_メトリクス非表示修正 フォロー
 #
-# 目的:
-#   今回の不具合の根本原因（リポジトリ側に metrics.sh が無い or install.sh の cp 範囲から
-#   抜けている）を回帰検知する。アプリだけが新しく metrics.sh は古い、という運用ミスは
-#   別途の Swift 側エラーバナーで検知できるが、リポジトリ側の構造的欠落はここで止める。
-#
-# 検証:
-#   UC1-S1: リポジトリの scripts/lib/metrics.sh が物理的に存在する。
-#   UC1-S2: install.sh が scripts/lib/ を $HOME/.local/bin/mac-health/lib/ にコピーする
-#          一行（`cp -R "$REPO_DIR/scripts/lib/." "$INSTALL_DIR/lib/"`）を含む。
-#   UC2-S1: scripts/lib/metrics.sh を source して metrics_* 純粋関数が呼べる
-#          （つまり「metrics.sh は配置すれば動く」契約を満たす）。
-#   UC3-S1: HEREDOC で組んだ一時 HOME 上に scripts/lib をコピーするだけで、
-#          `bash <copy>/metrics.sh load`（CLI 経路）が空文字以外を返す。
-#
+# BDD 形式（ユースケース → シナリオ → Given/When/Then）は .agents/TEST_BDD_FORMAT.md に従う。
+# 01_要件定義.md（20260529_083530_メトリクス非表示修正）の UC1-S1 派生（リポジトリ構造健全性）と
+# 03_実装計画.md のフォロー smoke を回帰検知する。
+# 今回の不具合の根本原因（リポジトリ側に metrics.sh が無い or install.sh の cp 範囲から
+# 抜けている）を回帰検知する。アプリだけが新しく metrics.sh は古い、という運用ミスは
+# 別途の Swift 側エラーバナーで検知できるが、リポジトリ側の構造的欠落はここで止める。
 # 失敗が 1 件でもあれば非 0 終了する。`make test-shell` から呼ばれる。
 
 set -u
@@ -62,8 +54,9 @@ assert_grep() {
   fi
 }
 
-# ===== ユースケース 1: リポジトリ構造の健全性 =====
-# UC1: 再リファクタや install.sh の変更で metrics.sh が抜け落ちないことを保証する。
+# ===== UC1: リポジトリ構造の健全性 =====
+# ユースケース: 再リファクタや install.sh の変更で scripts/lib/metrics.sh が抜け落ちず、
+#               install.sh の cp 範囲にも含まれることを構造的に保証する。
 
 # シナリオ: scripts/lib/metrics.sh がリポジトリに物理的に存在する。
 # Given: REPO_DIR 配下の想定パス
@@ -81,8 +74,9 @@ assert_file_exists "$install_sh" "UC1-S2 前提: install.sh が存在する"
 assert_grep 'scripts/lib/\." *"\$INSTALL_DIR/lib/"' "$install_sh" \
   "UC1-S2: install.sh が scripts/lib/ を INSTALL_DIR/lib/ にコピーする"
 
-# ===== ユースケース 2: metrics.sh の source 契約 =====
-# UC2: metrics.sh 自体が引き続き「source 可能・純粋関数群を露出する」契約を満たすことを保証する。
+# ===== UC2: metrics.sh の source 契約 =====
+# ユースケース: metrics.sh 自体が引き続き「source 可能で、純粋パース関数群を露出する」
+#               契約を満たすことを保証する（配置すれば動く）。
 
 # シナリオ: scripts/lib/metrics.sh を source し、純粋パース関数 metrics_parse_load_1m が呼べる。
 # Given: source 用シェル
@@ -95,10 +89,10 @@ out=$(
 # Then: "1.2"（%.1f 整形）が返る
 assert_eq "1.2" "$out" "UC2-S1: source 後に metrics_parse_load_1m が固定入力で 1.2 を返す"
 
-# ===== ユースケース 3: CLI 経路（bash metrics.sh <metric>）の smoke =====
-# UC3: 「アプリが /bin/bash <path> <metric> を起動して値を取得する」配布物経路を、
-#       一時 HOME ディレクトリで擬似的に再現して、値が返ることを smoke 検証する。
-#       実 OS の sysctl/vm_stat 等に依存するので「空文字でないこと」のみ判定する。
+# ===== UC3: CLI 経路（bash metrics.sh <metric>）の smoke =====
+# ユースケース: 「アプリが /bin/bash <path> <metric> を起動して値を取得する」配布物経路を
+#               一時 HOME ディレクトリで擬似的に再現し、各メトリクスが空文字以外を返すことを
+#               smoke 検証する（実 OS の sysctl/vm_stat 等に依存するため値の中身は問わない）。
 
 # シナリオ: 一時 HOME へ scripts/lib をコピーし、bash metrics.sh load が空文字以外を返す。
 # Given: 一時 HOME を作って scripts/lib/ をコピーする

@@ -122,8 +122,11 @@ final class MenuModelTests: XCTestCase {
     }
 
     // MARK: - 警告バナー（issue: 20260529_083530_メトリクス非表示修正）
-
-    /// ユースケース: MetricsCollector が metrics.sh 不在を検知したら、メニュー上にも警告が出る。
+    //
+    // ユースケース: MetricsCollector が metrics.sh 不在を検知したら、
+    //               MenuModel が collectorErrors を読み取りメニュー上に警告バナーを挿入する。
+    //               対応: .workflow/close/20260529_083530_メトリクス非表示修正/01_要件定義.md
+    //               （MenuModelTests のクラス doc のユースケースに対する追補グループ）。
 
     /// シナリオ: collectorErrors が空ならば警告バナーは挿入されない（既存メニュー出力と等価）。
     func test_build_noCollectorErrors_omitsBanner() {
