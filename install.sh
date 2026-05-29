@@ -73,6 +73,17 @@ done
 # === 4. ログディレクトリ準備 ===
 mkdir -p "$LOG_DIR"
 
+# === 4.5 shallow clone ガード（CFBundleVersion fallback 警告）===
+# issue: 20260529_123513_README_shallow_clone注意書き追加
+# `git clone --depth=1` 等で shallow clone された環境では `version_stamp.sh` の
+# `git describe --tags --always` が tag を見つけられず CFBundleVersion が `0.0.0-DEV`
+# fallback に落ちる。ビルドより前に shallow を検出し、stderr に警告と推奨手順を出す。
+# 環境変数 MACHEALTH_AUTO_UNSHALLOW=1 を指定された場合は `git fetch --tags --unshallow`
+# を自動実行する。検出スクリプト側で常に exit 0 を返すため、ここではビルドを止めない。
+echo ""
+echo "▶ shallow clone ガード（CFBundleVersion fallback 警告）"
+bash "$REPO_DIR/scripts/lib/shallow_clone_guard.sh" "$REPO_DIR" || true
+
 # === 5. Swift ビルド & .app バンドル組立 ===
 echo ""
 echo "▶ Swift ビルド"
