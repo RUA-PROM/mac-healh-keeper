@@ -11,6 +11,9 @@ src/MacHealth.dSYM/
 # SwiftPM（テスト用ビルド成果物）
 .build/
 
+# Makefile build ターゲットの出力先
+build/
+
 # ローカル設定の上書き
 scripts/config/thresholds.local.sh
 

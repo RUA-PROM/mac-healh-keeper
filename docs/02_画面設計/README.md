@@ -30,6 +30,7 @@ flowchart TD
     Bar -->|"クリック"| Menu
     subgraph Menu["G001 メニューバードロップダウン"]
         Header["タイトル: Mac Health Keeper (disabled)"]
+        ErrorBanner["G013 ⚠ メトリクス取得不可バナー (collectorErrors 非空時のみ・v1.3.0)"]
         Metrics["G002 メトリクス 6 行 + 最終更新 (⌘R)"]
         Quick["G003 クイック対処 4 項目"]
         JobList["G004 ジョブ一覧 4 行 (クリックで ON/OFF)"]
@@ -38,7 +39,8 @@ flowchart TD
         Bulk["G007 全停止/全再開"]
         Footer["G008 ヘルプ・About・終了 (⌘Q)"]
     end
-    Header --> Metrics
+    Header --> ErrorBanner
+    ErrorBanner --> Metrics
     Metrics --> Quick
     Quick --> JobList
     JobList --> RunJob
@@ -52,7 +54,7 @@ flowchart TD
     Footer -->|"About クリック"| AlertAbout["G012 About アラート"]
 ```
 
-> 全項目の文言・絵文字・keyEquivalent・isEnabled・action は `Sources/MacHealthKit/MenuModel.swift` の `headerSpecs` / `metricsSpecs` / `quickActionSpecs` / `jobListSpecs` / `runJobSpecs` / `logSpecs` / `bulkSpecs` / `footerSpecs` と完全一致します。
+> 全項目の文言・絵文字・keyEquivalent・isEnabled・action は `Sources/MacHealthKit/MenuModel.swift` の `headerSpecs` / **`errorBannerSpecs`**（v1.3.0 追加・`MetricsSnapshot.collectorErrors` 非空時のみ出力）/ `metricsSpecs` / `quickActionSpecs` / `jobListSpecs` / `runJobSpecs` / `logSpecs` / `bulkSpecs` / `footerSpecs` と完全一致します。
 
 ---
 
@@ -71,6 +73,21 @@ flowchart TD
 ## 2.3. G001 メニュー（NSMenu の全項目）
 
 順番・文言・isEnabled・action・keyEquivalent・representedJob・tooltip は `MenuModel` の出力と一致させます。
+
+### G013 ⚠ メトリクス取得不可バナー（条件付き表示・v1.3.0）
+
+`errorBannerSpecs(_:)`（`MenuModel.swift`）が、`MetricsSnapshot.collectorErrors` が空でない場合に限り、`headerSpecs()` の直後・`metricsSpecs()` の直前に挿入する。
+
+| # | 行（書式） | 例 | 由来 |
+| - | ---------- | -- | ---- |
+| 1 | `⚠ メトリクス取得不可: ./install.sh を再実行してください`（disabled） | 同左（固定リテラル・補間値なし） | `MetricsSnapshot.collectorErrors` 非空 |
+| 2 | セパレータ | — | 同上 |
+
+- 文言は **固定リテラル**で、補間値・ユーザー入力を含まない（注入面なし）。
+- 詳細（不在パス）は stderr 側に 1 回だけ出力される（`MetricsCollectorPolicy.missingScriptStderrLine`）。メニュー側は短文のみ。
+- `collectorErrors` が空（既定状態）の場合は **既存の v1.2.0 メニュー出力と完全一致**（後方互換）。
+- 由来となるエラー検知は `MetricsCollectorPolicy.decide`（[03 アーキテクチャ §3.6.1](../01_システム概要/03_アーキテクチャ/README.md#361-クラス図domain--infra-の主要型) のクラス図）の判定結果が `MetricsCollector` 経由で `MetricsSnapshot.collectorErrors` に積まれることによる。
+- 一次情報: `Sources/MacHealthKit/MenuModel.swift::errorBannerSpecs(_:)` / `Sources/MacHealthKit/MetricsCollectorPolicy.swift` / `src/MetricsCollector.swift::collect()`。
 
 ### G002 メトリクス（disabled 表示行 + 最終更新行）
 
@@ -199,7 +216,7 @@ flowchart TD
 | ---- | ---- |
 | 発生条件 | `showAbout` |
 | messageText | `Mac Health Keeper` |
-| informativeText | `再起動なしで再起動相当の状態を保つ\n自動メンテナンスシステム\n\n• メモリ／負荷監視（5分毎）\n• Dockerアイドル監視（10分毎）\n• 長期稼働の通知（毎日 9:00）\n• アプリ自動再起動（毎日 3:00）\n\nバージョン 1.2` |
+| informativeText | `再起動なしで再起動相当の状態を保つ\n自動メンテナンスシステム\n\n• メモリ／負荷監視（5分毎）\n• Dockerアイドル監視（10分毎）\n• 長期稼働の通知（毎日 9:00）\n• アプリ自動再起動（毎日 3:00）\n\nバージョン <CFBundleShortVersionString 動的取得値>`（`Bundle.main.infoDictionary["CFBundleShortVersionString"]` から `formatAboutVersionLine(_:)` 経由で動的取得。取得失敗時は `バージョン 不明` にフォールバック） |
 | alertStyle | `.informational` |
 | ボタン | `OK` |
 
@@ -240,4 +257,4 @@ flowchart TD
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

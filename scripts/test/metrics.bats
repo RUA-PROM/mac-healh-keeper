@@ -73,6 +73,8 @@ setup() {
 }
 
 # --- UC2 参照側の一致（集約前後の出力一致） ---
+# ユースケース: 純粋パース関数が 2 参照元（mac-health 表示用 raw / monitor 判定用）の
+#               どちらでも同じ書式契約で値を返し、集約前後で出力が壊れないことを保証する。
 
 # シナリオ: 同一入力で 2 参照元（mac-health raw / monitor MB）が整合する（01 UC2-S1）。
 @test "swap raw and MB are consistent for both reference sites" {
@@ -114,6 +116,8 @@ setup() {
 }
 
 # --- サブ F: CLI ディスパッチ（直接実行）と source 利用不変 ---
+# ユースケース: metrics.sh を直接実行（CLI 経路）したときに dispatch が対応関数へ委譲し、
+#               同時に従来の source 利用経路（純粋関数の直接呼び出し）が壊れないことを保証する（03 §2.4.4）。
 
 # シナリオ: metrics.sh swap を直接実行すると metrics_swap_used_raw 同値（固定 sysctl を PATH で注入・F 03 §2.4.4）。
 @test "metrics.sh swap (direct exec) equals metrics_swap_used_raw" {

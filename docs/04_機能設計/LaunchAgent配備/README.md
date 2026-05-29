@@ -10,6 +10,18 @@ document_id: "A788EB9C-0EFF-4A87-A441-38F98C4AFAD3"
 
 `install.sh` がアプリ・スクリプト・LaunchAgent plist を実環境へ配置し、`launchctl bootstrap` で 4 ジョブを `gui/<uid>` ドメインへ登録する。`uninstall.sh` は逆順に撤去する。
 
+### 開発者向け正規導線（v1.3.0 追加）
+
+「アプリだけ更新／scripts だけ更新」を避けるため、開発者は `Makefile` の以下の薄い委譲ターゲットを使う運用を推奨する。
+
+| ターゲット | 動作 | 用途 |
+| ---------- | ---- | ---- |
+| `make build` | `install.sh` と同一ファイル構成（`src/*.swift` 3 + `Sources/MacHealthKit/*.swift` 9 = 12 ファイル）の `swiftc` で `build/MacHealth` を生成する。`.app` バンドル・LaunchAgent 配置は行わない。 | ビルドのみ検証したい場合 |
+| `make install` | `./install.sh` を呼び出す（薄い委譲）。 | 通常のインストール |
+| `make reinstall` | `./uninstall.sh || true && ./install.sh` を順に呼ぶ。 | スクリプト・アプリ・LaunchAgent を完全に置き直したい場合 |
+
+`make build` の swiftc コマンドは `install.sh` 内部のものと同一ファイル列で組まれており、リポジトリ側で先に build エラーを検知できる（issue: `.workflow/20260529_083530_メトリクス非表示修正/`・v1.3.0）。
+
 ## install.sh の処理フロー
 
 ```mermaid
@@ -31,7 +43,7 @@ sequenceDiagram
     SH->>SED: launchagents/*.plist.template の {{HOME}} を $HOME に展開し ~/Library/LaunchAgents/ へ
     SED-->>SH: plist 4 本
     SH->>SH: mkdir -p ~/Library/Logs/MacHealth
-    SH->>SC: swiftc src/MacHealth.swift MetricsCollector.swift MenuBuilder.swift + Sources/MacHealthKit/*.swift (8 ファイル) -o MacHealth
+    SH->>SC: swiftc src/MacHealth.swift MetricsCollector.swift MenuBuilder.swift + Sources/MacHealthKit/*.swift (9 ファイル・v1.3.0 で MetricsCollectorPolicy.swift を追加) -o MacHealth
     SC-->>SH: バイナリ
     SH->>SH: mkdir -p ~/Applications/MacHealth.app/Contents/{MacOS,Resources}
     SH->>SH: cp MacHealth → Contents/MacOS / Info.plist → Contents/
@@ -117,4 +129,4 @@ sequenceDiagram
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

@@ -120,4 +120,63 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(specs.contains { $0.title == "  取得中…" && $0.kind == .disabled })
         XCTAssertFalse(specs.contains { $0.action == .refreshNow })
     }
+
+    // MARK: - 警告バナー（issue: 20260529_083530_メトリクス非表示修正）
+    //
+    // ユースケース: MetricsCollector が metrics.sh 不在を検知したら、
+    //               MenuModel が collectorErrors を読み取りメニュー上に警告バナーを挿入する。
+    //               対応: .workflow/close/20260529_083530_メトリクス非表示修正/01_要件定義.md
+    //               （MenuModelTests のクラス doc のユースケースに対する追補グループ）。
+
+    /// シナリオ: collectorErrors が空ならば警告バナーは挿入されない（既存メニュー出力と等価）。
+    func test_build_noCollectorErrors_omitsBanner() {
+        // Given: collectorErrors を含まない既定スナップショット
+        let snap = MetricsSnapshot()
+        let now = cal.date(2026, 5, 27, 12, 0)
+
+        // When: build を呼ぶ
+        let specs = MenuModel().build(snapshot: snap, catalog: catalog, timing: timing, now: now, calendar: cal)
+
+        // Then: 警告バナーの文言を含む項目は存在しない
+        XCTAssertFalse(specs.contains { $0.title.contains("メトリクス取得不可") })
+    }
+
+    /// シナリオ: collectorErrors が 1 件以上あれば、ヘッダー直後（index 2/3）に警告バナーが入る。
+    func test_build_withCollectorErrors_insertsBannerAfterHeader() {
+        // Given: collectorErrors を 1 件持つスナップショット
+        var snap = MetricsSnapshot()
+        snap.collectorErrors = ["metrics.sh not found: /path/to/missing"]
+        let now = cal.date(2026, 5, 27, 12, 0)
+
+        // When: build を呼ぶ
+        let specs = MenuModel().build(snapshot: snap, catalog: catalog, timing: timing, now: now, calendar: cal)
+
+        // Then: headerSpecs（タイトル + セパレータ）の直後に警告ラベル + セパレータが挿入される
+        XCTAssertEqual(specs[0].title, "Mac Health Keeper")
+        XCTAssertEqual(specs[0].kind, .disabled)
+        XCTAssertEqual(specs[1].kind, .separator)
+        XCTAssertEqual(specs[2].title, "⚠ メトリクス取得不可: ./install.sh を再実行してください")
+        XCTAssertEqual(specs[2].kind, .disabled)
+        XCTAssertEqual(specs[3].kind, .separator)
+        // And: 既存のメトリクス行も後続で維持される
+        XCTAssertTrue(specs.map { $0.title }.contains("  稼働時間:       0日 0時間"))
+    }
+
+    /// シナリオ: errorBannerSpecs ヘルパは空配列で空、非空で 2 件を返す（純粋関数の単体）。
+    func test_errorBannerSpecs_pureFunction_returnsExpected() {
+        // Given: MenuModel インスタンス
+        let model = MenuModel()
+
+        // When: errors が空
+        let empty = model.errorBannerSpecs([])
+        // Then: 空配列
+        XCTAssertEqual(empty.count, 0)
+
+        // When: errors が 1 件
+        let some = model.errorBannerSpecs(["err"])
+        // Then: 警告ラベル + セパレータの 2 件
+        XCTAssertEqual(some.count, 2)
+        XCTAssertEqual(some[0].title, "⚠ メトリクス取得不可: ./install.sh を再実行してください")
+        XCTAssertEqual(some[1].kind, .separator)
+    }
 }

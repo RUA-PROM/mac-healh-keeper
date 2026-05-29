@@ -82,7 +82,8 @@ flowchart TD
 | -------------- | -- | -------- | ------------ |
 | AppDelegate（`src/MacHealth.swift`） | UI | AppKit | メニューバー UI とユーザー操作の調整役。各層へ委譲し自身はロジックを持たない。 |
 | MenuBuilder（`src/MenuBuilder.swift`） | UI | AppKit | `[MenuItemSpec]` を NSMenu / NSMenuItem へ変換する薄い AppKit 部。 |
-| MetricsCollector（`src/MetricsCollector.swift`） | UI / Infra | ShellRunner, MetricsParser | 実コマンドを実行し出力を MetricsParser に委譲して MetricsSnapshot を組み立てる（Imperative Shell）。 |
+| MetricsCollector（`src/MetricsCollector.swift`） | UI / Infra | ShellRunner, MetricsParser, MetricsCollectorPolicy, FileManager | 実コマンドを実行し出力を MetricsParser に委譲して MetricsSnapshot を組み立てる（Imperative Shell）。`metrics.sh` 存在判定は `MetricsCollectorPolicy.decide` に委譲し、collectorErrors の伝播と stderr 警告（初回 1 回）を行う（v1.3.0）。 |
+| MetricsCollectorPolicy（`Sources/MacHealthKit/MetricsCollectorPolicy.swift`） | Domain | なし | `metrics.sh` 存在状態・パス・前回フラグから「追加するエラー配列」「stderr に出す行」「次回フラグ」を決定する純粋関数（v1.3.0・Functional Core・テスト対象）。 |
 | JobCatalog（`Sources/MacHealthKit/JobCatalog.swift`） | Domain | なし | ジョブ ID・短名・頻度・スケジュール種別・launchd ラベル規則の静的定義。 |
 | ScheduleTiming（`Sources/MacHealthKit/ScheduleTiming.swift`） | Domain | なし | 時刻計算・相対時刻表示の純粋ロジック（now を引数化）。 |
 | MetricsParser（`Sources/MacHealthKit/MetricsParser.swift`） | Domain | なし | コマンド出力テキスト → メトリクス値の純粋パース（丸め・単位・フォールバック）。 |
@@ -234,6 +235,18 @@ classDiagram
         +String dockerLine
         +Dictionary~String,JobStatus~ jobs
         +Date lastUpdated
+        +Array~String~ collectorErrors
+    }
+    class MetricsCollectorPolicy {
+        <<enum>>
+        +decide(exists, path, previouslyWarned) Decision
+        +missingScriptCollectorError(path) String
+        +missingScriptStderrLine(path) String
+    }
+    class Decision {
+        +Array~String~ collectorErrorsToAppend
+        +String? stderrLineToWrite
+        +Bool nextWarnedAboutMissingScript
     }
     class JobStatus {
         +Bool loaded
@@ -325,6 +338,7 @@ classDiagram
     ZshShellRunner ..|> ShellRunner
     JobController --> ShellRunner
     JobController --> JobCatalog
+    MetricsCollectorPolicy --> Decision
 ```
 
 ### 3.6.2. ジョブ状態遷移（メニュー操作と launchctl の関係）
@@ -355,13 +369,13 @@ stateDiagram-v2
 
 | 層 | テスト対象 | フレームワーク | 場所 |
 | -- | ---------- | -------------- | ---- |
-| Domain（Functional Core） | `ScheduleTiming` / `MetricsParser` / `MenuModel` / `JobCatalog` / `AppleScriptEscaper` | XCTest（純粋・固定入力） | `Tests/MacHealthKitTests/*` |
+| Domain（Functional Core） | `ScheduleTiming` / `MetricsParser` / `MenuModel`（`errorBannerSpecs` 含む）/ `JobCatalog` / `AppleScriptEscaper` / `MetricsCollectorPolicy` | XCTest（純粋・固定入力）+ MacHealthCheck（XCTest 非依存・常時実行） | `Tests/MacHealthKitTests/*` / `Sources/MacHealthCheck/{main,TestRunner}.swift` |
 | Infra 契約 | `ShellRunner` の引数配列契約・注入耐性、`JobController` の CQRS とフォールバック | XCTest（`SpyShellRunner` で呼出を捕捉） | `Tests/MacHealthKitTests/ShellRunnerContractTests.swift`・`ZshShellRunnerInjectionTests.swift`・`JobControllerTests.swift`・`JobControllerSafetyTests.swift` |
 | UI（NSMenu 部） | `MenuBuilder` の AppKit 変換は AppKit 実依存のため XCTest 対象外（02 §6.1）。データの正しさは `MenuModelTests` が網羅 | XCTest（モデル側）／目視 | `Tests/MacHealthKitTests/MenuModelTests.swift` |
-| シェル | `should_notify` / `classify_pressure` / `exceeds_threshold`（`notification_cooldown.sh`）、`metrics_*`（`metrics.sh`）、`rotate_logs`／`needs_rotation`／`next_generation`／`rotate_file`（`log.sh`） | bats（あれば）または自前 `*_test.sh` | `scripts/test/{monitor,metrics,log_rotate}{.bats,_test.sh}` |
-| 集約 | XCTest と シェルテストを集約 | `make test`（XCTest 不在環境では `swift test` を skip し続行） | `Makefile` |
+| シェル | `should_notify` / `classify_pressure` / `exceeds_threshold`（`notification_cooldown.sh`）、`metrics_*`（`metrics.sh`）、`rotate_logs`／`needs_rotation`／`next_generation`／`rotate_file`（`log.sh`）、`metrics.sh` 物理存在・`install.sh` cp 範囲・コピー後の bash 経路の値返却（`install_metrics_smoke_test.sh`） | bats（あれば）または自前 `*_test.sh` | `scripts/test/{monitor,metrics,log_rotate,install_metrics_smoke}{.bats,_test.sh}` |
+| 集約 | MacHealthCheck（常時）+ XCTest（搭載時のみ）+ シェルテスト | `make test`（MacHealthCheck → XCTest（XCTest 不在環境では skip）→ シェルテスト の順で実行） | `Makefile` |
 
-**境界**: 純粋ロジックは値を全網羅、副作用境界はスパイで「I/F の正しさ（引数列・順序）」のみ検証、実 I/O はテスト対象外（02 §6.1）。
+**境界**: 純粋ロジックは値を全網羅、副作用境界はスパイで「I/F の正しさ（引数列・順序）」のみ検証、実 I/O はテスト対象外（02 §6.1）。`MacHealthCheck`（v1.3.0 追加・`swift run MacHealthCheck`）は XCTest 非搭載環境（Command Line Tools のみ等）でも純粋関数の BDD アサーション（`MetricsCollectorPolicy` / `MenuModel.errorBannerSpecs` / `MetricsParser` 等）を必ず実行する経路として `make check` の必須ステップに組み込まれている。
 
 ---
 
@@ -391,7 +405,8 @@ sequenceDiagram
     SH->>SE: ログイン項目追加（hidden:true）
 ```
 
-- **配布ビルド**: `install.sh` 内の `swiftc` 直接コンパイル（Package.swift は使わない）。テスト用に `Package.swift`（`MacHealthKit` library + `MacHealthKitTests` test target）を保持。
+- **配布ビルド**: `install.sh` 内の `swiftc` 直接コンパイル（Package.swift は使わない）。テスト用に `Package.swift`（`MacHealthKit` library + `MacHealthCheck` executable + `MacHealthKitTests` test target）を保持。
+- **開発者向けビルド導線**（v1.3.0 追加）: `make build`（`install.sh` の `swiftc` と同一ファイル構成で `build/MacHealth` を生成）/ `make install`（`./install.sh` への薄い委譲）/ `make reinstall`（`./uninstall.sh || true && ./install.sh`）を提供し、「アプリだけ更新／scripts だけ更新」運用ミスの再発を抑止する。
 - **冪等性**: 既存ジョブを `launchctl bootout` してから `bootstrap` する。アプリは事前に `osascript -e 'quit app "Mac Health"'` で停止。ログイン項目は既存なら追加しない。
 - **撤去**: `uninstall.sh` で 4 ジョブ bootout → アプリ quit/削除 → ログイン項目削除 → `~/.local/bin/mac-health/` 削除 → ログは対話確認で残す/削除。
 
@@ -413,7 +428,9 @@ sequenceDiagram
 | `lint-swiftlint` | `scripts/lint/run-swiftlint.sh` | `swiftlint` | 任意（不在は SKIP） | 失敗 |
 | `check-cycles` | `scripts/lint/check-source-cycles.sh` | awk DFS（外部依存なし） | 必須 | 失敗 |
 | `security-scan` | `scripts/lint/security-scan.sh` | `grep -E` | 必須 | 失敗 |
-| `test` | `swift test` + `bats` または自前 `*_test.sh` | XCTest / bats | XCTest 不在は SKIP / シェルは必須 | 失敗 |
+| `test` | `swift run MacHealthCheck`（必須・XCTest 非依存）+ `swift test`（XCTest 搭載時のみ）+ `bats` または自前 `*_test.sh`（`install_metrics_smoke_test.sh` を含む） | MacHealthCheck / XCTest / bats | MacHealthCheck・シェルは必須 / XCTest 不在は SKIP | 失敗 |
+
+> **test ステップの内訳（v1.3.0）**: `MacHealthCheck` 32 アサーション + `monitor_test.sh` 9 + `metrics_test.sh` 17 + `log_rotate_test.sh` 15 + `install_metrics_smoke_test.sh` 8 = **合計 81 件**。XCTest 経路は Xcode 環境のみ追加実行されるため CI（macos-latest）では SKIP となるが、`MacHealthCheck` が同等観点（`MetricsCollectorPolicy.decide` / `MenuModel.errorBannerSpecs` / `MetricsParser` フォールバック）をカバーする。
 
 > ランナーはすべて **bash 3.2 互換**で書かれており、GNU 拡張（連想配列・`mapfile`）や `grep -P` は使いません。共通関数は `scripts/lint/lib/common.sh` に集約。
 
@@ -465,4 +482,4 @@ gh release create "$TAG" --generate-notes
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

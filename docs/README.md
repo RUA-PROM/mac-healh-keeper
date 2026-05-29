@@ -16,7 +16,7 @@ Mac Health Keeper は、macOS のメニューバー常駐アプリ（Swift / App
 
 ## ドキュメント構成
 
-本システム仕様書は、以下のセクションで構成されます。v1.1.0 でフル構成（システム概要 / 画面設計 / データ設計 / 機能設計 / エラー処理と外部通知 / ID 命名規則）まで拡充済み。
+本システム仕様書は、以下のセクションで構成されます。v1.1.0 でフル構成（システム概要 / 画面設計 / データ設計 / 機能設計 / エラー処理と外部通知 / ID 命名規則）まで拡充。v1.2.0 で `make check`・GitHub Actions、v1.3.0 で メトリクス非表示修正の恒久対策（警告バナー・MetricsCollectorPolicy・MacHealthCheck・install smoke・Makefile build/install/reinstall）を反映済み。
 
 1. **[システム概要](./01_システム概要/README.md)** — システムの全体像・構成・コンポーネントの責務・ジョブ一覧。
    - [01 プロジェクト概要](./01_システム概要/01_プロジェクト概要/README.md) — 目的・スコープ・成果物・技術スタック・対応 OS・配布形態・ライセンス
@@ -52,6 +52,7 @@ Mac Health Keeper は、macOS のメニューバー常駐アプリ（Swift / App
 | 2026-05-28 | 1.0.0      | 初版作成（アーキテクチャ＋ディレクトリ構成）                                                                                                                                                              | -      |
 | 2026-05-28 | 1.1.0      | フル構成へ拡充。01_プロジェクト概要・02_ステークホルダー、02_画面設計、03_データ設計、04_機能設計（メニューバー表示 / メトリクス収集 / ジョブ ON_OFF / クイック対処 / 監視ジョブ / 通知 / ログとローテーション / LaunchAgent 配備）、05_エラー処理と外部通知、99_ID 命名規則と管理を新規作成。03_アーキテクチャ・04_ディレクトリ構成は実装詳細まで反映して拡充。レビュー結果は `docs/00_review/20260528_112137_review.md` に記録。 | docs worker |
 | 2026-05-28 | 1.2.0      | `make check` 導入・GitHub Actions（`check.yml` / `create-release.yaml`）・`scripts/lint/`（shellcheck/shfmt/swift-format/swiftlint/source 循環検出/security-scan）の実装を docs に反映。04_機能設計に F009（ローカル検証）・F010（CI・Release 自動化）を新設、01_システム概要 §3.8.1（ローカル検証と CI/Release 自動化）と 04_ディレクトリ構成（`scripts/lint/`・`.github/workflows/`）、99_ID 命名規則（F009/F010・F009-S1/S2・F010-S1/S2）、01_プロジェクト概要 §1.3 / §1.4、02_ステークホルダー §2.2 を同時更新。レビュー結果は `docs/00_review/20260528_144521_review.md` に記録。 | docs worker |
+| 2026-05-29 | 1.3.0      | メトリクス非表示修正（`.workflow/20260529_083530_メトリクス非表示修正/`）の実装を docs に反映。`MetricsSnapshot.collectorErrors`（非破壊フィールド追加）・`MetricsCollectorPolicy`（純粋関数・Functional Core）・`MenuModel.errorBannerSpecs`（メニュー警告バナー G013）・`Sources/MacHealthCheck`（XCTest 非依存ランナー）・`scripts/test/install_metrics_smoke_test.sh`（インストール経路の smoke）・`Makefile` の `build / install / reinstall / test-swift-purecore` ターゲットを 02 画面設計 / 03 データ設計（T01 拡張）/ 04 機能設計（F001 / F002 / F008 / F009）/ 05 エラー処理（metrics.sh 不在・トラブルシュート）/ 99 ID 命名規則（G013）/ 01 システム概要（§3.1 / §3.6.1 / §3.7 / §3.8.1 / 01 プロジェクト概要 / 04 ディレクトリ構成）に反映。非破壊変更（契約変更ルール §非破壊変更：フィールド追加・Optional 追加）のため minor bump。レビュー結果は `docs/00_review/20260529_094618_review.md` に記録。 | docs worker |
 
 ---
 
@@ -69,4 +70,4 @@ Mac Health Keeper は、macOS のメニューバー常駐アプリ（Swift / App
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日
+**最終更新**: 2026 年 05 月 29 日

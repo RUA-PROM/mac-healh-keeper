@@ -20,7 +20,7 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 
 ## 1.2. スコープ（対象範囲）
 
-### スコープ内（v1.2 時点で実装済み）
+### スコープ内（v1.3 時点で実装済み）
 
 | 区分 | 機能 | 実装 |
 | ---- | ---- | ---- |
@@ -30,10 +30,11 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 | 自動整理 | アプリ自動再起動（毎日 3:00） | `scripts/bin/refresh.sh` + `...refresh.plist.template`（`StartCalendarInterval Hour=3 Minute=0`） |
 | UI | メニューバー常駐アプリ | `src/MacHealth.swift`（`LSUIElement=true`）。ステータスアイコン → NSMenu でメトリクス・ジョブ・クイック対処を提供。 |
 | UI | クイック対処（4 種） | AppRefresh 即実行 / `sudo purge`（確認ダイアログ）/ memory_pressure / Docker Desktop Quit |
+| UI | **メトリクス取得不可の警告バナー（G013・v1.3.0）** | `Sources/MacHealthKit/MetricsCollectorPolicy.swift`（純粋関数・不在検知）+ `MenuModel.errorBannerSpecs` で headerSpecs 直後に「⚠ メトリクス取得不可: ./install.sh を再実行してください」を条件付き挿入。 |
 | ジョブ制御 | ON/OFF トグル・全停止/全再開・即実行 | `Sources/MacHealthKit/JobController.swift`（CQRS） + `scripts/bin/mac-health` CLI |
 | 通知 | 注入耐性のあるデスクトップ通知 | `Sources/MacHealthKit/AppleScriptEscaper.swift`（argv 渡し）／`scripts/lib/notify.sh` |
 | ログ | サイズ世代ローテート＋排他制御 | `scripts/lib/log.sh`（`rotate_logs`） + `scripts/lib/lock.sh`（`with_lock`） |
-| 配布 | 手動インストーラ／アンインストーラ | `install.sh` / `uninstall.sh`（`~/.local/bin/mac-health/`・`~/Applications/MacHealth.app`・`~/Library/LaunchAgents/`） |
+| 配布 | 手動インストーラ／アンインストーラ | `install.sh` / `uninstall.sh`（`~/.local/bin/mac-health/`・`~/Applications/MacHealth.app`・`~/Library/LaunchAgents/`）+ **v1.3.0** で `make build / make install / make reinstall` を開発者向け正規導線として追加。 |
 
 ### スコープ外（明示）
 
@@ -66,7 +67,7 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 | スケジューラ | launchd | macOS 同梱 | `StartInterval` / `StartCalendarInterval` でジョブ起動。 | `launchagents/*.plist.template` |
 | 通知 | osascript（AppleScript） | macOS 同梱 | デスクトップ通知発行。Swift 側は `AppleScriptEscaper` で argv 渡し、シェル側は `notify.sh`。 | `Sources/MacHealthKit/AppleScriptEscaper.swift`・`scripts/lib/notify.sh` |
 | メトリクス取得 | `sysctl` / `vm_stat` / `uptime` / `memory_pressure` / `pgrep` / `docker` | macOS 同梱・任意 | `scripts/lib/metrics.sh` が一元化。Swift は `metrics.sh <metric>` を引数呼び出し。 | `scripts/lib/metrics.sh`・`src/MetricsCollector.swift` |
-| テスト | XCTest（Swift） / bats / 自前 `*_test.sh`（シェル） | - | `Tests/MacHealthKitTests/`・`scripts/test/`。`make test` で集約。 | `Makefile`・`Package.swift` |
+| テスト | XCTest（Swift） / MacHealthCheck（XCTest 非依存 executable・v1.3.0） / bats / 自前 `*_test.sh`（`install_metrics_smoke_test.sh` を含む・v1.3.0） | - | `Tests/MacHealthKitTests/`・`Sources/MacHealthCheck/`・`scripts/test/`。`make test` で集約（MacHealthCheck → XCTest → シェルテストの順）。 | `Makefile`・`Package.swift` |
 | 検証ツール | `shellcheck`（必須） / `shfmt` / `swift-format` / `swiftlint`（任意） | Homebrew | `make check` から `scripts/lint/run-*.sh` 経由で実行。任意ツール未導入は SKIP。 | `Makefile`・`scripts/lint/*` |
 | CI / Release | GitHub Actions（`macos-latest` / `ubuntu-latest`） | - | PR / `main` push で `make check`、`main` マージで JST 日時タグ + `gh release --generate-notes`。 | `.github/workflows/{check.yml, create-release.yaml}` |
 
@@ -83,7 +84,7 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 - **手動インストール**: GitHub からリポジトリを取得し `./install.sh` を実行する。App Store 配布・自動更新・コード署名は対象外（スコープ外）。
 - **`install.sh` が行うこと**: 環境チェック → `scripts/` を `~/.local/bin/mac-health/` へコピー → LaunchAgent plist を `{{HOME}}` 展開して `~/Library/LaunchAgents/` に配置 → `swiftc` で 11 ファイル（`src/*.swift` 3 ＋ `Sources/MacHealthKit/*.swift` 8）を 1 モジュールとしてコンパイル → `~/Applications/MacHealth.app` を組立 → `launchctl bootstrap` で 4 ジョブをロード → `osascript` でログイン項目に追加。
 - **`uninstall.sh` が行うこと**: 4 ジョブを `launchctl bootout` → アプリ Quit・削除 → ログイン項目から削除 → `~/.local/bin/mac-health/` を削除 → ログ削除を対話確認。
-- **再インストール／アップデート**: `install.sh` の再実行で既存ジョブを bootout 後に bootstrap し直す（冪等）。
+- **再インストール／アップデート**: `install.sh` の再実行で既存ジョブを bootout 後に bootstrap し直す（冪等）。開発者は `make reinstall`（`./uninstall.sh || true && ./install.sh`）を推奨（v1.3.0 で追加）。
 
 ## 1.7. ライセンス
 
@@ -102,4 +103,4 @@ document_id: "4238B6D3-C4BD-4A8B-BB4A-BF9967FC57FD"
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

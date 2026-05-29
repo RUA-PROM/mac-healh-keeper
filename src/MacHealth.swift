@@ -310,6 +310,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Mac Health Keeper"
+        // issue: 20260529_105524_ビルド時バージョン自動stamp
+        // 末尾 1 行のみ Bundle 動的取得に切り替え。他の行はリテラル不変（最小差分）。
+        // 取得失敗時は formatAboutVersionLine 側で「バージョン 不明」へフォールバック。
+        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let versionLine = formatAboutVersionLine(shortVersion)
         alert.informativeText = """
             再起動なしで再起動相当の状態を保つ
             自動メンテナンスシステム
@@ -319,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             • 長期稼働の通知（毎日 9:00）
             • アプリ自動再起動（毎日 3:00）
 
-            バージョン 1.2
+            \(versionLine)
             """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

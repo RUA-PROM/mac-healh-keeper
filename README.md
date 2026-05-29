@@ -179,19 +179,22 @@ LaunchAgent、アプリ、スクリプト、ログイン項目すべてが綺麗
 
 ## 🧪 開発・テスト
 
-純粋ロジック（時刻計算・通知クールダウン・閾値判定・メトリクス取得）を単体テストで保護しています。Swift は XCTest（SwiftPM）、シェルは bats（不在時は自前 assert にフォールバック）で検証します。
+純粋ロジック（時刻計算・通知クールダウン・閾値判定・メトリクス取得・メトリクス収集経路の不在検知）を単体テストで保護しています。Swift は **MacHealthCheck**（XCTest 非依存・常時実行・v1.3.0 追加）と XCTest（SwiftPM・Xcode 環境のみ）、シェルは bats（不在時は自前 assert にフォールバック）で検証します。
 
 生メトリクス取得（swap / 圧縮メモリ / Load Avg / メモリ空き率 / 稼働時間 / Docker）は `scripts/lib/metrics.sh` に集約し、`scripts/bin/mac-health`（status）と `scripts/bin/monitor.sh` が source して参照します。`metrics.sh` は「メトリクス取得」の単一責務に閉じ、閾値判定・通知・ログは含めません（純粋パース関数を `scripts/test/metrics.bats` / `metrics_test.sh` で固定入力検証）。
+
+`metrics.sh` が `~/.local/bin/mac-health/lib/` に未配置だった場合（古い `install.sh` だけ実行された等）は、Swift 側で `MetricsCollectorPolicy.decide`（純粋関数）が検知し、メニュー先頭に「⚠ メトリクス取得不可: ./install.sh を再実行してください」を表示します。回帰防止のため `scripts/test/install_metrics_smoke_test.sh` が `make check` 経路で常時実行されます（v1.3.0 追加）。
 
 ### テスト実行
 
 ```bash
-make test          # Swift（swift test）とシェルテストをまとめて実行
-make test-swift    # Swift（XCTest）のみ
-make test-shell    # シェルテストのみ
+make test                # MacHealthCheck（必須）+ XCTest（搭載時のみ）+ シェルテスト + smoke を一括実行
+make test-swift-purecore # MacHealthCheck のみ（XCTest 非依存・Command Line Tools 環境でも走る）
+make test-swift          # Swift（XCTest）のみ
+make test-shell          # シェルテスト（bats か自前 *_test.sh + install_metrics_smoke_test.sh）のみ
 ```
 
-`make test` は `swift test` を実行した後、`bats` が入っていれば `bats scripts/test/`（`*.bats` を自動走査）、入っていなければ自動で自前 assert ランナー（`bash scripts/test/monitor_test.sh` と `bash scripts/test/metrics_test.sh`）にフォールバックします。いずれかのテストが失敗すると非 0 終了します。
+`make test` は v1.3.0 で再構成され、① `swift run MacHealthCheck`（XCTest 非依存・**32 アサーション**）→ ② `swift test`（XCTest 搭載時のみ・不在は SKIP）→ ③ シェルテスト（bats か自前 `*_test.sh` + smoke）の順で実行します。シェルテストは `monitor_test.sh`（9）+ `metrics_test.sh`（17）+ `log_rotate_test.sh`（15）+ `install_metrics_smoke_test.sh`（8）で **合計 49 件**。MacHealthCheck と合わせて **81 件** が `make check` で緑になることを CI が保証します。
 
 ### ローカル検証（lint / format / 循環 / セキュリティ / test）
 
@@ -235,13 +238,24 @@ bats が無い環境でもシェルテストは自前 assert ランナーで実�
 
 | パス | 内容 |
 |---|---|
-| `Sources/MacHealthKit/` | AppKit 非依存の純粋ロジック（`ScheduleTiming`）。`swift test` と配布ビルド（install.sh の swiftc）の両方から参照される |
-| `Tests/MacHealthKitTests/` | XCTest（`ScheduleTiming` の UC1/UC2） |
-| `scripts/test/` | シェルテスト（`monitor.bats` / `monitor_test.sh` で `notification_cooldown.sh` の UC3/UC4、`metrics.bats` / `metrics_test.sh` で `metrics.sh` の UC1/UC2） |
-| `Package.swift` | SwiftPM 構成（テスト専用。配布ビルドには使わない） |
-| `Makefile` | `make test` でテスト一式を実行 |
+| `Sources/MacHealthKit/` | AppKit 非依存の純粋ロジック（`ScheduleTiming` / `MetricsParser` / `MenuModel` / `JobCatalog` / `AppleScriptEscaper` / `ShellRunner` / `JobController` / **`MetricsCollectorPolicy`**（v1.3.0））。`swift test` と配布ビルド（install.sh の swiftc）の両方から参照される |
+| `Sources/MacHealthCheck/`（v1.3.0） | XCTest 非依存の executable test runner（`main.swift` / `TestRunner.swift`）。`swift run MacHealthCheck` で純粋関数の BDD アサーション 32 件を実行 |
+| `Tests/MacHealthKitTests/` | XCTest（`ScheduleTiming` / `MetricsParser` / `MenuModel`（`errorBannerSpecs` 含む）/ `JobCatalog` / `JobController` / `ShellRunner` 契約・注入 / `AppleScriptEscaper` 等） |
+| `scripts/test/` | シェルテスト（`monitor.bats` / `monitor_test.sh` で `notification_cooldown.sh` の UC3/UC4、`metrics.bats` / `metrics_test.sh` で `metrics.sh` の UC1/UC2、`log_rotate_test.sh` で `log.sh` のローテート、**`install_metrics_smoke_test.sh`** で `metrics.sh` 物理存在・`install.sh` cp 範囲・コピー後 bash 経路の値返却（v1.3.0）） |
+| `Package.swift` | SwiftPM 構成（テスト専用。`MacHealthKit` library + `MacHealthCheck` executable + `MacHealthKitTests` test target。配布ビルドには使わない） |
+| `Makefile` | `make test` でテスト一式・`make check` で lint/format/cycle/security/test 一気通貫実行・**`make build / install / reinstall`**（v1.3.0）で開発者向けビルド導線 |
 
 > SwiftPM の生成物（`.build/`）と `Package.swift` は配布物には含めません。配布ビルドは従来どおり install.sh の `swiftc` を使います。
+
+### ビルド・インストール（開発者向け・v1.3.0 追加）
+
+```bash
+make build       # install.sh と同一の swiftc コマンドで build/MacHealth を生成（.app バンドル/LaunchAgent は組まない）
+make install     # ./install.sh への薄い委譲（通常のインストール）
+make reinstall   # ./uninstall.sh || true && ./install.sh を順に呼ぶ
+```
+
+「アプリだけ更新／scripts だけ更新」運用ミスで `~/.local/bin/mac-health/lib/metrics.sh` が古い／未配置になりメトリクスが空欄になる事故（issue: `.workflow/20260529_083530_メトリクス非表示修正/`）を構造的に抑止するため、開発者は `make install` か `make reinstall` を使ってください。
 
 ---
 
