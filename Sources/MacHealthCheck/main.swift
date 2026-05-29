@@ -240,6 +240,175 @@ useCase("formatAboutVersionLine が CFBundleShortVersionString から About ア�
     }
 }
 
+// MARK: - UC: LaunchAgentStatus（launchctl print 出力のパース）
+//
+// issue: 20260529_122242_LaunchAgentロード失敗調査と修正
+// 01_要件定義.md UC6-S1〜S3 + 境界の純粋関数アサーションを揃える。
+// 既存 install.sh の `launchctl list | grep` 偽陽性問題（memo/20260529_204726_root-cause-investigation.md §2）
+// を `launchctl print` ベース判定に置き換えるため、状態判定 pure 関数を強くカバーする。
+
+useCase("LaunchAgentStatus.parse が launchctl print の出力テキストから状態を決定する") {
+
+    scenario("出力に \"Could not find service\" を含む場合 status は notFound・isLoaded は false（01 UC6-S1）") {
+        // Given: launchctl print のエラー出力テキスト（domain に bootstrap されていない場合の典型）
+        let label = "com.github.adachi-tatsuru.machealth.docker"
+        let printOutput = """
+        Bad request.
+        Could not find service "com.github.adachi-tatsuru.machealth.docker" in domain for user gui: 501
+        """
+
+        // When: parse を呼ぶ
+        let s = LaunchAgentStatus.parse(label: label, printOutput: printOutput)
+
+        // Then: notFound と判定され、isLoaded は false（bootstrap が必要）
+        assertEqual(s.status, LaunchAgentStatus.Status.notFound, "Could not find service → notFound")
+        assertFalse(s.isLoaded, "notFound は isLoaded=false")
+        // And (Then): 出力抜粋が空でなく、判定材料が UI/ログに残る
+        assertTrue(s.printOutputExcerpt.contains("Could not find service"),
+                   "printOutputExcerpt にエラー文言を残す")
+    }
+
+    scenario("出力に \"state = running\" を含む場合 status は running・isLoaded は true（01 UC6-S2）") {
+        // Given: launchctl print の通常出力で state = running が含まれる
+        let label = "com.github.adachi-tatsuru.machealth.monitor"
+        let printOutput = """
+        gui/501/com.github.adachi-tatsuru.machealth.monitor = {
+        \tactive count = 1
+        \tpath = …
+        \tstate = running
+        }
+        """
+
+        // When: parse を呼ぶ
+        let s = LaunchAgentStatus.parse(label: label, printOutput: printOutput)
+
+        // Then: running と判定され、isLoaded は true
+        assertEqual(s.status, LaunchAgentStatus.Status.running, "state = running → running")
+        assertTrue(s.isLoaded, "running は isLoaded=true")
+    }
+
+    scenario("出力に \"state = not running\" を含む場合 status は notRunning・isLoaded は true（loaded 扱い・01 UC6-S3）") {
+        // Given: launchctl print の通常出力で state = not running（次回スケジュール待ち）が含まれる
+        let label = "com.github.adachi-tatsuru.machealth.uptime"
+        let printOutput = """
+        gui/501/com.github.adachi-tatsuru.machealth.uptime = {
+        \tactive count = 0
+        \tstate = not running
+        \truns = 0
+        }
+        """
+
+        // When: parse を呼ぶ
+        let s = LaunchAgentStatus.parse(label: label, printOutput: printOutput)
+
+        // Then: notRunning と判定され、isLoaded は true（bootstrap 済み・待機中）
+        assertEqual(s.status, LaunchAgentStatus.Status.notRunning, "state = not running → notRunning")
+        assertTrue(s.isLoaded, "notRunning も loaded 扱い（次回スケジュール待ち）")
+    }
+
+    scenario("空文字列入力に対しては status は unknown・isLoaded は false") {
+        // Given: 空文字列（launchctl print が何も出さなかったコーナーケース）
+        let label = "com.example.foo"
+        let printOutput = ""
+
+        // When: parse を呼ぶ
+        let s = LaunchAgentStatus.parse(label: label, printOutput: printOutput)
+
+        // Then: unknown 判定・isLoaded=false（誤って loaded 判定しない）
+        assertEqual(s.status, LaunchAgentStatus.Status.unknown, "空文字は unknown")
+        assertFalse(s.isLoaded, "unknown は isLoaded=false")
+        // And (Then): 抜粋も空文字（情報の捏造をしない）
+        assertEqual(s.printOutputExcerpt, "", "空入力に対しては抜粋も空")
+    }
+
+    scenario("notFound 判定は running/notRunning キーワードより優先される（同居する偽出力でも安全に notFound と扱う）") {
+        // Given: ありえないが "Could not find service" と "state = running" が両方含まれる出力
+        let label = "com.example.weird"
+        let printOutput = "Could not find service \"x\" ... state = running"
+
+        // When: parse を呼ぶ
+        let s = LaunchAgentStatus.parse(label: label, printOutput: printOutput)
+
+        // Then: notFound を優先（false positive を出さない安全方向の優先順）
+        assertEqual(s.status, LaunchAgentStatus.Status.notFound, "notFound 優先")
+        assertFalse(s.isLoaded, "notFound 優先 → isLoaded=false")
+    }
+}
+
+// MARK: - UC: LaunchAgentStatusSummary（複数件サマリの pure ヘルパ）
+
+useCase("LaunchAgentStatusSummary が複数 LaunchAgent 状態を集約して人間可読サマリを生成する") {
+
+    scenario("全件 loaded（running 2 件 + notRunning 2 件）なら summaryLine は \"4/4 loaded\"") {
+        // Given: 4 件すべて loaded（running/notRunning の混在）
+        let arr = [
+            LaunchAgentStatus(label: "com.example.a", status: .running,    printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.example.b", status: .notRunning, printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.example.c", status: .running,    printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.example.d", status: .notRunning, printOutputExcerpt: ""),
+        ]
+
+        // When: summaryLine を呼ぶ
+        let line = LaunchAgentStatusSummary.summaryLine(arr)
+
+        // Then: "4/4 loaded" を返す
+        assertEqual(line, "4/4 loaded", "全件 loaded サマリ")
+        // And (Then): allLoaded は true、failedCount は 0
+        assertTrue(LaunchAgentStatusSummary.allLoaded(arr), "全件 loaded で allLoaded=true")
+        assertEqual(LaunchAgentStatusSummary.failedCount(arr), 0, "失敗 0 件")
+    }
+
+    scenario("3/4 loaded で 1 件 notFound のとき NG ラベルが label の末尾セグメントで列挙される") {
+        // Given: 1 件 notFound（docker）、3 件 loaded
+        let arr = [
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.monitor", status: .notRunning, printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.docker",  status: .notFound,   printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.uptime",  status: .notRunning, printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.refresh", status: .running,    printOutputExcerpt: ""),
+        ]
+
+        // When: summaryLine を呼ぶ
+        let line = LaunchAgentStatusSummary.summaryLine(arr)
+
+        // Then: "3/4 loaded (NG: docker)" を返す（末尾セグメントのみ・順序維持）
+        assertEqual(line, "3/4 loaded (NG: docker)", "1 件 NG のサマリは末尾セグメントを使う")
+        // And (Then): allLoaded=false, failedCount=1
+        assertFalse(LaunchAgentStatusSummary.allLoaded(arr), "1 件失敗なら allLoaded=false")
+        assertEqual(LaunchAgentStatusSummary.failedCount(arr), 1, "失敗 1 件")
+    }
+
+    scenario("空配列に対しては allLoaded は false（true を返すと偽の安心感を与えるため）") {
+        // Given: 空の状態配列
+        let arr: [LaunchAgentStatus] = []
+
+        // When: allLoaded を呼ぶ
+        let all = LaunchAgentStatusSummary.allLoaded(arr)
+
+        // Then: false（vacuous-true を避ける）
+        assertFalse(all, "空配列で allLoaded=true にしない（偽の安心感を避ける）")
+        // And (Then): failedCount は 0、summaryLine は "0/0 loaded"
+        assertEqual(LaunchAgentStatusSummary.failedCount(arr), 0, "空配列の失敗件数は 0")
+        assertEqual(LaunchAgentStatusSummary.summaryLine(arr), "0/0 loaded", "空配列のサマリは 0/0 loaded")
+    }
+
+    scenario("複数件 NG のときは NG ラベルが順序通り \", \" 区切りで列挙される") {
+        // Given: 2 件 NG（docker, refresh）+ 2 件 loaded
+        let arr = [
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.monitor", status: .running,    printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.docker",  status: .notFound,   printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.uptime",  status: .notRunning, printOutputExcerpt: ""),
+            LaunchAgentStatus(label: "com.github.adachi-tatsuru.machealth.refresh", status: .unknown,    printOutputExcerpt: ""),
+        ]
+
+        // When: summaryLine を呼ぶ
+        let line = LaunchAgentStatusSummary.summaryLine(arr)
+
+        // Then: 順序維持で 2 件列挙される
+        assertEqual(line, "2/4 loaded (NG: docker, refresh)", "NG 複数件は順序維持で列挙")
+        assertEqual(LaunchAgentStatusSummary.failedCount(arr), 2, "失敗 2 件")
+    }
+}
+
 // MARK: - 集計と終了
 
 CheckRunner.shared.finishAndExit()
