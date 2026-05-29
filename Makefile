@@ -93,7 +93,9 @@ test-shell:
 		  && bash scripts/test/plist_validator_test.sh \
 		  && bash scripts/test/launchagent_doctor_test.sh \
 		  && bash scripts/test/shallow_clone_guard_test.sh \
-		  && bash scripts/test/build_app_bundle_test.sh; \
+		  && bash scripts/test/build_app_bundle_test.sh \
+		  && bash scripts/test/release_artifact_validator_test.sh \
+		  && bash scripts/test/workflow_release_app_test.sh; \
 	fi
 
 # ------------------------------------------------------------------
