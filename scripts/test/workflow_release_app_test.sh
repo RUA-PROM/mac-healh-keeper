@@ -158,6 +158,13 @@ assert_grep_file "gh workflow run release-app.yml" "$CREATE_RELEASE_YML" \
 assert_grep_file "field tag=" "$CREATE_RELEASE_YML" \
   "UC2-S3: dispatch は tag 入力を field で渡す"
 
+# シナリオ: gh workflow run を呼ぶため actions: write permission を最小権限で付与する。
+# Given: create-release.yaml
+# When: permissions ブロックを確認する
+# Then: actions: write が含まれる
+assert_grep_file "actions: write" "$CREATE_RELEASE_YML" \
+  "UC2-S4: create-release.yaml に actions: write 権限が付与されている（workflow_dispatch 用）"
+
 # ===== UC3: check.yml は本 issue で触っていない（回帰なし） =====
 # ユースケース:
 # check.yml（既存 PR/push CI）は本 issue の対象外。意図しない変更が混入しないことを
