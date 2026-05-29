@@ -40,6 +40,7 @@ document_id: "498FC4EC-EDE1-407E-A9D0-9B50C6BE0355"
 | G010 | sudo purge 確認アラート | 実行前確認 | [02 画面設計 §2.4 G010](../02_画面設計/README.md#g010-sudo-purge-確認アラート) |
 | G011 | 各指標の意味ヘルプアラート | `showMetricsHelp` の本文 | [02 画面設計 §2.4 G011](../02_画面設計/README.md#g011-各指標の意味ヘルプアラート) |
 | G012 | About アラート | バージョン情報 | [02 画面設計 §2.4 G012](../02_画面設計/README.md#g012-about-アラート) |
+| G013 | ⚠ メトリクス取得不可バナー（v1.3.0） | `MetricsSnapshot.collectorErrors` 非空時に headerSpecs 直後へ条件付き挿入される警告項目 | [02 画面設計 §2.3 G013](../02_画面設計/README.md#g013--メトリクス取得不可バナー条件付き表示v130) |
 
 ---
 
@@ -184,7 +185,8 @@ document_id: "498FC4EC-EDE1-407E-A9D0-9B50C6BE0355"
 | ---- | ---- | -- |
 | XCTest（Swift） | `<対象>Tests.swift` | `MenuModelTests.swift` / `JobControllerTests.swift` |
 | bats（シェル） | `<対象>.bats` | `monitor.bats` / `metrics.bats` / `log_rotate.bats` |
-| 自前ランナー（シェル） | `<対象>_test.sh` | `monitor_test.sh` / `metrics_test.sh` / `log_rotate_test.sh` |
+| 自前ランナー（シェル） | `<対象>_test.sh` | `monitor_test.sh` / `metrics_test.sh` / `log_rotate_test.sh` / `install_metrics_smoke_test.sh`（v1.3.0） |
+| XCTest 非依存（Swift） | `Sources/MacHealthCheck/{main,TestRunner}.swift`（v1.3.0） | `swift run MacHealthCheck` で実行する純粋関数 BDD ランナー |
 
 > シェル関数命名で **`helpers` / `misc` / `common` / `utils` は禁止**（`.agents/spec/03_命名規則.md`）。代わりに責務単位（`log` / `notify` / `metrics` / `lock`）を使う。
 
@@ -209,4 +211,4 @@ document_id: "498FC4EC-EDE1-407E-A9D0-9B50C6BE0355"
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

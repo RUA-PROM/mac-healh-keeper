@@ -64,6 +64,10 @@ public struct MenuModel {
     /// 同一入力に対し常に同一の配列を返す（決定的）。
     /// `now` を引数で受けるため相対時刻文言が固定でき、テストで安定する。
     /// `calendar` は現状の DateFormatter（既定 = ローカル）と整合させるため timezone の供給に使う。
+    ///
+    /// `snapshot.collectorErrors` が空でない場合、`headerSpecs` の直後に警告ラベル + セパレータを
+    /// 1 件挿入する（issue: 20260529_083530_メトリクス非表示修正）。文言は固定で、ユーザーに
+    /// metrics.sh 再配置の手段（./install.sh 再実行）を促す。
     public func build(snapshot: MetricsSnapshot,
                       catalog: JobCatalog,
                       timing: ScheduleTiming,
@@ -71,6 +75,7 @@ public struct MenuModel {
                       calendar: Calendar = .current) -> [MenuItemSpec] {
         var specs: [MenuItemSpec] = []
         specs += headerSpecs()
+        specs += errorBannerSpecs(snapshot.collectorErrors)
         specs += metricsSpecs(snapshot: snapshot, calendar: calendar)
         specs += quickActionSpecs()
         specs += jobListSpecs(snapshot: snapshot, catalog: catalog, timing: timing, now: now, calendar: calendar)
@@ -79,6 +84,19 @@ public struct MenuModel {
         specs += bulkSpecs()
         specs += footerSpecs()
         return specs
+    }
+
+    /// 収集エラーがあれば警告ラベル + セパレータを返す。空なら `[]`（既存メニュー出力と等価）。
+    /// 文言は固定リテラルで補間値を含まない。詳細（パス等）は stderr 側で出力する。
+    ///
+    /// `public` は XCTest 非搭載環境向け executable testrunner（MacHealthCheck）からの直接呼び出し
+    /// のため必要（issue: 20260529_083530_メトリクス非表示修正 フォロー）。
+    public func errorBannerSpecs(_ errors: [String]) -> [MenuItemSpec] {
+        guard !errors.isEmpty else { return [] }
+        return [
+            .disabled("⚠ メトリクス取得不可: ./install.sh を再実行してください"),
+            .separator(),
+        ]
     }
 
     // MARK: - セクション（現 rebuildMenu の各ブロックと 1 対 1）

@@ -33,7 +33,11 @@ sequenceDiagram
 
     AD->>MM: build(snapshot, catalog, timing, now: Date())
     activate MM
-    MM->>MM: headerSpecs / metricsSpecs / quickActionSpecs
+    MM->>MM: headerSpecs
+    alt snapshot.collectorErrors.isEmpty == false (v1.3.0)
+        MM->>MM: errorBannerSpecs (G013 警告バナー + セパレータ)
+    end
+    MM->>MM: metricsSpecs / quickActionSpecs
     MM->>JC: catalog.jobs / shortNames / frequencies / schedules
     MM->>ST: relativeTimeShort / relativeNext / nextDailyRun
     MM-->>AD: [MenuItemSpec]
@@ -65,12 +69,13 @@ sequenceDiagram
 | -------- | ---- |
 | `src/MacHealth.swift::AppDelegate.rebuildMenu` | 60 秒タイマー・ユーザー操作・metrics 取得完了で呼ばれる調整役 |
 | `src/MacHealth.swift::AppDelegate.setStatusIcon` | SF Symbol 候補から最初に取得できたものを採用、フォールバック `🩺` |
-| `Sources/MacHealthKit/MenuModel.swift` | `[MenuItemSpec]` 生成（純粋）。`MenuItemSpec` / `MenuAction` 定義。 |
+| `Sources/MacHealthKit/MenuModel.swift` | `[MenuItemSpec]` 生成（純粋）。`MenuItemSpec` / `MenuAction` 定義。v1.3.0 で `errorBannerSpecs(_:)` を追加し、`MetricsSnapshot.collectorErrors` が空でない場合に G013 警告バナーを headerSpecs 直後に挿入する。 |
 | `src/MenuBuilder.swift` | `[MenuItemSpec] → NSMenu` 変換 + `MenuAction → Selector` |
 
 ## 関連テスト
 
-- `Tests/MacHealthKitTests/MenuModelTests.swift` — 項目データの正しさ（順序・isEnabled・action・keyEquivalent・representedJob・tooltip）。
+- `Tests/MacHealthKitTests/MenuModelTests.swift` — 項目データの正しさ（順序・isEnabled・action・keyEquivalent・representedJob・tooltip）。v1.3.0 で `errorBannerSpecs` の BDD（空時と非空時のメニュー差分）3 ケースを追加。
+- `Sources/MacHealthCheck/TestRunner.swift` — v1.3.0 追加・XCTest 非依存で `errorBannerSpecs` / `MenuModel.build` の警告バナー挿入位置を BDD 検証する。`swift run MacHealthCheck` で常時実行（Command Line Tools のみの環境でも走る）。
 - AppKit 変換は AppKit 実依存のため XCTest 対象外（02 §6.1）。メニュー目視で確認。
 
 ## 既知の制約
@@ -89,4 +94,4 @@ sequenceDiagram
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

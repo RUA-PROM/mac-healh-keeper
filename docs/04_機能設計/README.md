@@ -16,8 +16,8 @@ Mermaid 図作成時は [`.workflow/templates/AGENTS_MERMAID_RULES.md`](../../.w
 
 | 機能 ID | 機能名 | 概要 | ディレクトリ |
 | ------- | ------ | ---- | ------------ |
-| F001 | メニューバー表示 | ステータスアイコン・NSMenu の構築と再描画 | [メニューバー表示](./メニューバー表示/README.md) |
-| F002 | メトリクス収集 | `metrics.sh` 引数呼び出し + 固定文字列残置 3 箇所 + `MetricsParser` | [メトリクス収集](./メトリクス収集/README.md) |
+| F001 | メニューバー表示 | ステータスアイコン・NSMenu の構築と再描画。v1.3.0 で `errorBannerSpecs`（G013 警告バナー）を追加 | [メニューバー表示](./メニューバー表示/README.md) |
+| F002 | メトリクス収集 | `metrics.sh` 引数呼び出し + 固定文字列残置 3 箇所 + `MetricsParser` + v1.3.0 で `MetricsCollectorPolicy.decide` による不在検知 | [メトリクス収集](./メトリクス収集/README.md) |
 | F003 | ジョブ ON/OFF（CQRS） | `JobController` の load/unload/toggle/enableAll/disableAll と `isLoaded` query | [ジョブON_OFF](./ジョブON_OFF/README.md) |
 | F004 | クイック対処 | App Refresh / sudo purge / memory_pressure / Docker Quit | [クイック対処](./クイック対処/README.md) |
 | F005 | 監視ジョブ（4 種） | monitor / docker / uptime / refresh の launchd 駆動バッチ | [監視ジョブ](./監視ジョブ/README.md) |
@@ -43,4 +43,4 @@ Mermaid 図作成時は [`.workflow/templates/AGENTS_MERMAID_RULES.md`](../../.w
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

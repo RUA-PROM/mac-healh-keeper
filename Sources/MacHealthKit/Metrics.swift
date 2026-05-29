@@ -19,6 +19,10 @@ public struct JobStatus: Equatable {
 }
 
 /// メトリクスのスナップショット（キャッシュ用）。
+///
+/// `collectorErrors` は MetricsCollector が収集経路の不整合（例: metrics.sh 未配置）を
+/// 検出した際に追加する任意フィールド。MenuModel が空でない場合に警告ラベルを描画する。
+/// 既定 `[]` のため、既存呼び出し・既存テストへの影響はない（issue: 20260529_083530_メトリクス非表示修正）。
 public struct MetricsSnapshot: Equatable {
     public var uptimeDays: Int
     public var uptimeHours: Int
@@ -29,6 +33,7 @@ public struct MetricsSnapshot: Equatable {
     public var dockerLine: String
     public var jobs: [String: JobStatus]
     public var lastUpdated: Date
+    public var collectorErrors: [String]
 
     public init(uptimeDays: Int = 0,
                 uptimeHours: Int = 0,
@@ -38,7 +43,8 @@ public struct MetricsSnapshot: Equatable {
                 swapUsed: String = "—",
                 dockerLine: String = "—",
                 jobs: [String: JobStatus] = [:],
-                lastUpdated: Date = .distantPast) {
+                lastUpdated: Date = .distantPast,
+                collectorErrors: [String] = []) {
         self.uptimeDays = uptimeDays
         self.uptimeHours = uptimeHours
         self.loadAvg = loadAvg
@@ -48,5 +54,6 @@ public struct MetricsSnapshot: Equatable {
         self.dockerLine = dockerLine
         self.jobs = jobs
         self.lastUpdated = lastUpdated
+        self.collectorErrors = collectorErrors
     }
 }

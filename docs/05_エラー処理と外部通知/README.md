@@ -23,6 +23,7 @@ Mac Health Keeper は **HTTP サーバ／RPC を持たない** スタンドア�
 | 通知失敗 | `osascript` がエラー / 通知センター未許可 | **無視可**。`osascript` の戻り値は破棄（`2>/dev/null`、シェル側）。Swift 側も `ShellRunner.run` の戻り値を破棄。 | `scripts/lib/notify.sh` / `src/MacHealth.swift::notify(_:)` |
 | `ShellRunner.run` 失敗（Process throw） | `Process.run()` の throw | **空文字 `""` を返す**（現状互換）。呼び出し元は trim 後の空チェックで判断する。 | `Sources/MacHealthKit/ShellRunner.swift::ZshShellRunner.run` |
 | メトリクス取得失敗 | `metrics.sh` / `shellFixed` が空応答 | `MetricsParser` が `"—"` フォールバックを返し UI に **「—」表示**。compressed は `0.0 GB`、docker count は `?`。 | `Sources/MacHealthKit/MetricsParser.swift` / `scripts/lib/metrics.sh` |
+| **`metrics.sh` 不在（v1.3.0 追加）** | `MetricsCollector.collect()` 冒頭の `FileManager.fileExists(atPath: metricsShPath)` が `false` | `MetricsCollectorPolicy.decide` が「`MetricsSnapshot.collectorErrors` へ警告メッセージ 1 件追加」「stderr に初回 1 行のみ警告」「次回フラグ更新」を決定する純粋関数として処理。`MenuModel.errorBannerSpecs` が G013 警告バナー（`⚠ メトリクス取得不可: ./install.sh を再実行してください`）を headerSpecs 直後に挿入。実コマンド `bash <不在パス> <metric>` は引き続き空文字を返し、`MetricsParser` が既存の `"—"` フォールバックを返すため**各指標は従来挙動**で表示される（追加で警告バナーが出る）。配置済みに戻ればフラグはリセットされ、再度不在になった際に 1 回だけ警告が出る。 | `src/MetricsCollector.swift::collect` / `Sources/MacHealthKit/MetricsCollectorPolicy.swift` / `Sources/MacHealthKit/MenuModel.swift::errorBannerSpecs` |
 | Docker `docker ps` ハング | `docker ps -q` が応答せず 3 秒経過 | バックグラウンド + `sleep 3; kill -9` でタイムアウトし `?` を返す。ジョブは継続。 | `scripts/bin/check-docker.sh` / `src/MetricsCollector.swift::collect` |
 | アプリの Quit 失敗 | `refresh.sh::quit_app` で `quit saving no` がエラー（dirty 等） | `log_event "$JOB" WARN "$app: quit returned error (likely dirty), skip"` を記録し **その app をスキップ**。次の app へ。 | `scripts/bin/refresh.sh` |
 | アプリの Quit タイムアウト | `wait_for_quit` 30 秒経過 | 同上の WARN ログを残し再起動せずスキップ。 | `scripts/bin/refresh.sh` |
@@ -53,7 +54,29 @@ flowchart TD
   Loop --> END[全件処理後 0 終了]
 ```
 
-### 5.2.2. ジョブ ON/OFF 失敗の流れ
+### 5.2.2. `metrics.sh` 不在検知の流れ（v1.3.0 追加）
+
+```mermaid
+flowchart TD
+  T[Timer 60s / 手動] --> MC[MetricsCollector.collect]
+  MC --> FE[fileExists metricsShPath]
+  FE --> POL[MetricsCollectorPolicy.decide]
+  POL --> CASE{exists?}
+  CASE -->|true| RESET[warnedAboutMissingScript = false]
+  CASE -->|false| APPEND[collectorErrors += missingScriptCollectorError]
+  APPEND --> WARNCASE{previouslyWarned?}
+  WARNCASE -->|false| FPUTS[fputs missingScriptStderrLine, stderr]
+  WARNCASE -->|true| SKIP[stderr 出力なし - スパム抑止]
+  FPUTS --> SETFLAG[warnedAboutMissingScript = true]
+  SKIP --> SETFLAG
+  RESET --> COLLECT[残りのメトリクス取得を継続]
+  SETFLAG --> COLLECT
+  COLLECT --> MM[MenuModel.build]
+  MM --> EB[errorBannerSpecs collectorErrors]
+  EB --> RENDER[NSMenu に G013 警告バナー挿入]
+```
+
+### 5.2.3. ジョブ ON/OFF 失敗の流れ
 
 ```mermaid
 flowchart TD
@@ -120,6 +143,7 @@ flowchart TD
 
 | 症状 | 観測点 / 対処 |
 | ---- | ------------- |
+| メトリクスがすべて `—` 表示・メニュー先頭に `⚠ メトリクス取得不可: ./install.sh を再実行してください` が出る | v1.3.0 で追加された G013 警告バナー。`scripts/lib/metrics.sh` が `~/.local/bin/mac-health/lib/` に未配置（古い `install.sh` のまま `scripts/lib/` 更新分が反映されていない等）。**対処**: `./install.sh` を再実行する（または開発者は `make reinstall` / `make install`）。stderr（`launchd.<job>.err` ではなく **アプリ起動経路の stderr**）にも `[MetricsCollector] metrics.sh not found: <path>` が初回 1 回だけ記録される。 |
 | 通知が出ない | `events.log` に該当行があれば「通知送信は成功」。出ない場合は通知センター設定（システム設定 → 通知 → osascript / Mac Health）を確認。 |
 | 通知が多すぎる | `.monitor-cooldown` を確認。`NOTIFICATION_COOLDOWN_MIN` を増やす。 |
 | ジョブが動かない | `mac-health status` で loaded 状態を確認。`<job>.log` の mtime が古ければ `launchctl bootstrap`/`bootout` を試す。 |
@@ -151,4 +175,4 @@ flowchart TD
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

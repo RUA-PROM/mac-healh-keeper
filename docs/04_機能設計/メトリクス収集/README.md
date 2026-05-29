@@ -10,6 +10,7 @@ document_id: "85B129C0-1B00-4F30-93A8-318CB0F4CBF8"
 
 - `MetricsCollector`（Imperative Shell）が `metrics.sh <metric>` 引数呼び出しで主要メトリクスを取得し、`MetricsParser`（Functional Core）で純粋に値化する。
 - 一部（boot epoch / compressor 生ページ / docker count）は `metrics.sh` の戻り値が算出済みのため、入力書式の互換性確保の観点から `/bin/zsh -l -c <固定文字列>` で残置している。残置文字列は固定リテラルでユーザー入力は流入しない（注入面なし）。
+- **v1.3.0**: 収集冒頭で `MetricsCollectorPolicy.decide(exists:path:previouslyWarned:)`（純粋関数・Functional Core）を呼び、`metrics.sh` 不在を検知した場合は `MetricsSnapshot.collectorErrors` に警告を追加し、stderr に初回 1 回だけ警告行を書き出す。配置済みに戻れば次回不在時に再度 1 回警告できるようフラグをリセットする。検知結果は `MenuModel.errorBannerSpecs` 経由で G013 警告バナーとして表示される。
 
 ## 入出力
 
@@ -33,6 +34,19 @@ sequenceDiagram
 
     AD->>MC: collect()
     activate MC
+
+    MC->>FM: fileExists(metricsShPath) (v1.3.0)
+    FM-->>MC: Bool
+    MC->>MC: MetricsCollectorPolicy.decide(exists:path:previouslyWarned:)
+    alt exists == false
+        MC-->>MC: collectorErrors += missingScriptCollectorError
+        opt previouslyWarned == false
+            MC->>MC: fputs(missingScriptStderrLine, stderr)
+        end
+        MC->>MC: warnedAboutMissingScript = true
+    else exists == true
+        MC->>MC: warnedAboutMissingScript = false (リセット)
+    end
 
     MC->>SR: run("/bin/bash", [metricsShPath, "load"])
     SR->>MS: bash metrics.sh load
@@ -81,7 +95,8 @@ sequenceDiagram
 
 | ファイル | 役割 |
 | -------- | ---- |
-| `src/MetricsCollector.swift` | 調整役（Imperative Shell）。`metric(_:)` / `shellFixed(_:)` / `collect()`。 |
+| `src/MetricsCollector.swift` | 調整役（Imperative Shell）。`metric(_:)` / `shellFixed(_:)` / `collect()`。v1.3.0 で `fileExists`（依存注入）と `warnedAboutMissingScript` フラグを保持し、`collect()` 冒頭で `MetricsCollectorPolicy.decide` を呼ぶ。 |
+| `Sources/MacHealthKit/MetricsCollectorPolicy.swift` | v1.3.0 追加・Functional Core。`decide(exists:path:previouslyWarned:) -> Decision` で「追加 collectorErrors」「stderr 行」「次回フラグ」を純粋関数として返す。 |
 | `Sources/MacHealthKit/MetricsParser.swift` | 純粋パース（`parseLoadAvg` / `parseSwapUsed` / `parseMemoryFreePct` / `uptimeDaysHours` / `compressedGB` / `dockerLine`）。 |
 | `Sources/MacHealthKit/ShellRunner.swift` | 引数配列で起動。シェル再パース排除。 |
 | `Sources/MacHealthKit/JobController.swift` | `isLoaded(job:)` を提供（query）。 |
@@ -94,6 +109,8 @@ sequenceDiagram
 - `Tests/MacHealthKitTests/ScheduleTimingTests.swift` — `nextDailyRun` の境界（当日／翌日繰上げ）・`relativeTimeShort` / `relativeNext`。
 - `scripts/test/metrics.bats` / `metrics_test.sh` — `metrics_parse_*` / `metrics_uptime_*` の bats + 自前テスト。
 - `Tests/MacHealthKitTests/ShellRunnerContractTests.swift` / `ZshShellRunnerInjectionTests.swift` — 引数配列契約と注入耐性。
+- `Sources/MacHealthCheck/TestRunner.swift`（v1.3.0 追加） — `MetricsCollectorPolicy.decide` の 4 分岐（exists / not-exists × previouslyWarned）と `missingScriptCollectorError` / `missingScriptStderrLine` の固定書式を BDD 検証。`MetricsParser.parse*` の `"—"` フォールバックも併せて検証。`swift run MacHealthCheck` で常時実行（XCTest 非搭載環境でも走る）。
+- `scripts/test/install_metrics_smoke_test.sh`（v1.3.0 追加） — `scripts/lib/metrics.sh` の物理存在（UC6-S1）、`install.sh` の `cp -R scripts/lib/.` が残っていること（UC6-S2）、一時 HOME へコピー後 `bash metrics.sh load/swap/free` が空文字以外を返すこと（UC6-S3）の smoke 検証。
 
 ## 既知の制約
 
@@ -111,4 +128,4 @@ sequenceDiagram
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker

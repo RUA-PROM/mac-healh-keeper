@@ -319,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             • 長期稼働の通知（毎日 9:00）
             • アプリ自動再起動（毎日 3:00）
 
-            バージョン 1.2
+            バージョン 1.3
             """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

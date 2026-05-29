@@ -19,6 +19,11 @@ final class MetricsCollector {
     private let timing: ScheduleTiming
     private let logDir: String
     private let metricsShPath: String
+    private let fileExists: (String) -> Bool
+
+    /// metrics.sh 未配置時の stderr 警告を 1 回だけに抑止するためのフラグ。
+    /// 60 秒周期の収集でログがスパムにならないようにする。issue: 20260529_083530_メトリクス非表示修正。
+    private var warnedAboutMissingScript: Bool = false
 
     init(runner: ShellRunner,
          parser: MetricsParser,
@@ -26,7 +31,8 @@ final class MetricsCollector {
          jobController: JobController,
          timing: ScheduleTiming,
          logDir: String,
-         metricsShPath: String) {
+         metricsShPath: String,
+         fileExists: @escaping (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) {
         self.runner = runner
         self.parser = parser
         self.catalog = catalog
@@ -34,6 +40,7 @@ final class MetricsCollector {
         self.timing = timing
         self.logDir = logDir
         self.metricsShPath = metricsShPath
+        self.fileExists = fileExists
     }
 
     /// 02 §3.4: サブ C 集約済みの metrics.sh を `metrics.sh <metric>` の引数呼び出しで起動する。
@@ -53,6 +60,22 @@ final class MetricsCollector {
     /// 現 gatherMetrics() と同一の値・順序で収集し MetricsSnapshot を組み立てる（振る舞い不変）。
     func collect() -> MetricsSnapshot {
         var s = MetricsSnapshot()
+
+        // issue 20260529_083530_メトリクス非表示修正:
+        // インストール先に metrics.sh が無い場合（古い install.sh 実行のみで lib/ が更新されていない等）、
+        // /bin/bash <不在パス> は空文字を返し、MetricsParser のフォールバックで全指標が "—" になり
+        // 「サイレント空欄」状態になる。検知 → 伝播 → stderr 警告のロジックは MetricsCollectorPolicy
+        // （Functional Core）に切り出してテスト可能にしてある。本 Imperative Shell は I/O のみ担う。
+        let decision = MetricsCollectorPolicy.decide(
+            exists: fileExists(metricsShPath),
+            path: metricsShPath,
+            previouslyWarned: warnedAboutMissingScript
+        )
+        s.collectorErrors.append(contentsOf: decision.collectorErrorsToAppend)
+        if let line = decision.stderrLineToWrite {
+            fputs(line, stderr)
+        }
+        warnedAboutMissingScript = decision.nextWarnedAboutMissingScript
 
         // load/swap/free は metrics.sh の raw 取得関数が現状の sed/awk 抽出と同一テキストを返すため寄せる。
         let load = metric("load")

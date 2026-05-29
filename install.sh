@@ -82,6 +82,7 @@ swiftc MacHealth.swift MetricsCollector.swift MenuBuilder.swift \
   "$REPO_DIR/Sources/MacHealthKit/Metrics.swift" \
   "$REPO_DIR/Sources/MacHealthKit/JobCatalog.swift" \
   "$REPO_DIR/Sources/MacHealthKit/MetricsParser.swift" \
+  "$REPO_DIR/Sources/MacHealthKit/MetricsCollectorPolicy.swift" \
   "$REPO_DIR/Sources/MacHealthKit/MenuModel.swift" \
   "$REPO_DIR/Sources/MacHealthKit/ShellRunner.swift" \
   "$REPO_DIR/Sources/MacHealthKit/AppleScriptEscaper.swift" \

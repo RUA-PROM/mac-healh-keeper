@@ -22,15 +22,25 @@
 #            全て成功（または XCTest skip + シェル成功）で 0 終了する。
 #            make check はいずれかの検証が失敗すると非 0 終了する。
 
-.PHONY: test test-swift test-shell \
+.PHONY: test test-swift test-swift-purecore test-shell \
         check lint lint-shell lint-shfmt lint-swift-format lint-swiftlint \
-        check-cycles security-scan
+        check-cycles security-scan \
+        build install reinstall
 
-# XCTest が利用可能なら swift test を試行（失敗は全体失敗に反映）、
-# 非搭載環境では警告して skip する。続けて test-shell を必ず実行し、
-# 各段の終了コードを集約して返す。
+# 純粋関数の単体テスト経路は 2 系統ある（issue: 20260529_083530_メトリクス非表示修正 フォロー）。
+#   1) test-swift-purecore: `swift run MacHealthCheck` で XCTest 非依存の純粋テストを実行。
+#      Command Line Tools のみの環境でも必ず実行され、失敗は全体失敗に反映する（必須経路）。
+#   2) test-swift:          XCTest が利用可能な環境でのみ `swift test` を実行する（追加経路）。
+# どちらの経路でも、続けて test-shell（シェル単体 + smoke）を必ず実行する。
 test:
 	@rc=0; \
+	echo "==> swift run MacHealthCheck (pure-core BDD, always runs)"; \
+	if swift run MacHealthCheck; then \
+		echo "    MacHealthCheck: OK"; \
+	else \
+		echo "    MacHealthCheck: FAILED" >&2; \
+		rc=1; \
+	fi; \
 	if xcrun --find xctest >/dev/null 2>&1; then \
 		echo "==> swift test (XCTest available)"; \
 		if swift test; then \
@@ -41,7 +51,7 @@ test:
 		fi; \
 	else \
 		echo "==> swift test: SKIP (XCTest not available; e.g. Command Line Tools only)" >&2; \
-		echo "    -> shell tests still run; Swift logic should be checked on a full Xcode environment." >&2; \
+		echo "    -> MacHealthCheck covers the pure-core path; full XCTest suite needs a Xcode environment." >&2; \
 	fi; \
 	echo "==> shell tests"; \
 	if $(MAKE) --no-print-directory test-shell; then \
@@ -57,6 +67,12 @@ test:
 	fi; \
 	exit $$rc
 
+# XCTest 非依存の純粋テスト経路（CI/CommandLineTools でも常に実行可能）。
+# 失敗時は終了コード 1 を返す。
+test-swift-purecore:
+	@echo "==> swift run MacHealthCheck"
+	swift run MacHealthCheck
+
 test-swift:
 	@echo "==> swift test"
 	swift test
@@ -68,7 +84,10 @@ test-shell:
 		bats scripts/test/; \
 	else \
 		echo "    (bats not found -> fallback to self-made assert runner)"; \
-		bash scripts/test/monitor_test.sh && bash scripts/test/metrics_test.sh && bash scripts/test/log_rotate_test.sh; \
+		bash scripts/test/monitor_test.sh \
+		  && bash scripts/test/metrics_test.sh \
+		  && bash scripts/test/log_rotate_test.sh \
+		  && bash scripts/test/install_metrics_smoke_test.sh; \
 	fi
 
 # ------------------------------------------------------------------
@@ -115,3 +134,38 @@ check-cycles:
 
 security-scan:
 	@bash scripts/lint/security-scan.sh
+
+# ------------------------------------------------------------------
+# ビルド / インストール導線
+# issue: 20260529_083530_メトリクス非表示修正
+# install.sh / uninstall.sh への薄い委譲ターゲット。
+# 「アプリだけ更新／scripts だけ更新」の運用ミスを避けるため、
+# 開発者には make install（または make reinstall）の利用を推奨する。
+# build は install.sh の swiftc コマンドと同じファイル構成で
+# build/MacHealth を生成する。.app バンドルや LaunchAgent 配置は install.sh が担う。
+# ------------------------------------------------------------------
+
+build:
+	@echo "==> swiftc build (build/MacHealth)"
+	@mkdir -p build
+	@swiftc src/MacHealth.swift src/MetricsCollector.swift src/MenuBuilder.swift \
+	  Sources/MacHealthKit/ScheduleTiming.swift \
+	  Sources/MacHealthKit/Metrics.swift \
+	  Sources/MacHealthKit/JobCatalog.swift \
+	  Sources/MacHealthKit/MetricsParser.swift \
+	  Sources/MacHealthKit/MetricsCollectorPolicy.swift \
+	  Sources/MacHealthKit/MenuModel.swift \
+	  Sources/MacHealthKit/ShellRunner.swift \
+	  Sources/MacHealthKit/AppleScriptEscaper.swift \
+	  Sources/MacHealthKit/JobController.swift \
+	  -o build/MacHealth
+	@ls -la build/MacHealth
+
+install:
+	@echo "==> ./install.sh"
+	@./install.sh
+
+reinstall:
+	@echo "==> ./uninstall.sh && ./install.sh"
+	@./uninstall.sh || true
+	@./install.sh

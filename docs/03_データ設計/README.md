@@ -52,6 +52,7 @@ erDiagram
 | 7 | `dockerLine` | `String` | `"—"` | Docker 行（起動中なら `Docker:         起動中（コンテナ: <n>）`、停止中なら `Docker:         停止中`） |
 | 8 | `jobs` | `[String: JobStatus]` | `[:]` | キーはジョブ ID（`JobCatalog.jobs` と一致）。 |
 | 9 | `lastUpdated` | `Date` | `.distantPast` | 最終更新時刻。`.distantPast` は「取得中」 |
+| 10 | `collectorErrors` | `[String]` | `[]` | v1.3.0 追加（非破壊フィールド追加）。`MetricsCollector` が `MetricsCollectorPolicy.decide` 経由で「収集経路の不整合」（例: `metrics.sh` 未配置）を検知した際の警告メッセージ列。`MenuModel.errorBannerSpecs(_:)` が空でない場合に警告バナー（G013）を生成する。 |
 
 ```swift
 public struct MetricsSnapshot: Equatable {
@@ -64,6 +65,7 @@ public struct MetricsSnapshot: Equatable {
     public var dockerLine: String
     public var jobs: [String: JobStatus]
     public var lastUpdated: Date
+    public var collectorErrors: [String]   // v1.3.0 追加・既定 []
 }
 ```
 
@@ -311,4 +313,4 @@ sequenceDiagram
 
 ---
 
-**最終更新**: 2026 年 05 月 28 日 / **maintainer**: docs worker
+**最終更新**: 2026 年 05 月 29 日 / **maintainer**: docs worker
