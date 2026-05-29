@@ -113,20 +113,35 @@ else
 fi
 
 # === 6. LaunchAgent をロード ===
+# issue: 20260529_122242_LaunchAgentロード失敗調査と修正
+# 旧コード（`launchctl list | grep` 判定）は RunAtLoad=false な docker plist で偽陽性を出していた
+# （memo/20260529_204726_root-cause-investigation.md §2）。
+# scripts/lib/launchagent_lifecycle.sh の load_launchagent を使い、bootout → bootstrap → verify
+# （launchctl print 経由）の冪等シーケンスに統一する。各 phase の stderr は構造化ログとして出力される。
 echo ""
 echo "▶ LaunchAgent をロード"
-UID_NUM=$(id -u)
+# shellcheck source=scripts/lib/launchagent_lifecycle.sh
+source "$REPO_DIR/scripts/lib/launchagent_lifecycle.sh"
+LA_FAIL=0
 for job in "${JOBS[@]}"; do
   plist="$LAUNCH_AGENT_DIR/${BUNDLE_PREFIX}.${job}.plist"
-  # 既存があれば一旦アンロード
-  launchctl bootout "gui/$UID_NUM/${BUNDLE_PREFIX}.${job}" 2>/dev/null || true
-  launchctl bootstrap "gui/$UID_NUM" "$plist" 2>/dev/null || launchctl load "$plist"
-  if launchctl list | grep -q "${BUNDLE_PREFIX}.${job}"; then
+  label="${BUNDLE_PREFIX}.${job}"
+  # load_launchagent は 3 行の構造化ログ（label= phase= exit= stderr=）を stdout に出す。
+  # サマリ上は短く済ませるため、構造化ログは indented でそのまま流す。
+  if lifecycle_out=$(load_launchagent "$label" "$plist"); then
     echo "  ✅ $job loaded"
   else
     echo "  ⚠️  $job ロード失敗"
+    LA_FAIL=$((LA_FAIL + 1))
   fi
+  # 構造化ログを 2 スペース indent で表示（運用時のエラー原因追跡用）
+  printf '%s\n' "$lifecycle_out" | sed 's/^/    /'
 done
+if [ "$LA_FAIL" -gt 0 ]; then
+  echo ""
+  echo "  ℹ️  $LA_FAIL 件のロード失敗あり。診断スクリプトで詳細確認:"
+  echo "       bash $INSTALL_DIR/bin/launchagent-doctor.sh"
+fi
 
 # === 7. アプリを起動 ===
 echo ""
