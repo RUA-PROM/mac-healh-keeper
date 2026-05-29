@@ -409,6 +409,111 @@ useCase("LaunchAgentStatusSummary が複数 LaunchAgent 状態を集約して人
     }
 }
 
+// MARK: - UC: AppBundlePolicy（Info.plist 必須キーの宣言と検証）
+//
+// 関連 issue: 20260529_122727_Makefile_app化拡張（D331DD8F-C57D-4869-B6FF-B46CAB8E6F60）
+// build_app_bundle.sh / install.sh / Makefile build のいずれの経路でも
+// AppBundlePolicy.requiredInfoPlistKeys を満たすことが「壊れていない .app」の最低条件である。
+
+useCase("AppBundlePolicy が Info.plist の必須キー集合・stamp 対象キー・検証ヘルパを pure に提供する") {
+
+    scenario("requiredInfoPlistKeys と stampedKey の自己整合: stampedKey は必須キー集合に含まれる") {
+        // Given: AppBundlePolicy の宣言済み定数
+        let stamped = AppBundlePolicy.stampedKey
+        let required = AppBundlePolicy.requiredInfoPlistKeys
+
+        // When: stamped が required に含まれるかを問う
+        let contained = required.contains(stamped)
+
+        // Then: stampedKey は必ず requiredInfoPlistKeys のメンバである
+        assertTrue(contained, "stampedKey '\(stamped)' は requiredInfoPlistKeys に含まれる")
+        assertTrue(AppBundlePolicy.stampedKeyIsRequired,
+                   "stampedKeyIsRequired プロパティが true（自己整合チェック）")
+    }
+
+    scenario("requiredInfoPlistKeys は 6 個の固定キーを含む（個別 key の存在チェック）") {
+        // Given: requiredInfoPlistKeys
+        let keys = AppBundlePolicy.requiredInfoPlistKeys
+
+        // When: 個別 key を順に問う
+        // Then: 6 個の必須キーが全て含まれる
+        assertEqual(keys.count, 6, "必須キー数は 6")
+        assertTrue(keys.contains("CFBundleExecutable"), "CFBundleExecutable 必須")
+        assertTrue(keys.contains("CFBundleIdentifier"), "CFBundleIdentifier 必須")
+        assertTrue(keys.contains("CFBundleName"), "CFBundleName 必須")
+        assertTrue(keys.contains("CFBundlePackageType"), "CFBundlePackageType 必須")
+        assertTrue(keys.contains("CFBundleVersion"), "CFBundleVersion 必須")
+        assertTrue(keys.contains("CFBundleShortVersionString"), "CFBundleShortVersionString 必須")
+    }
+
+    scenario("必須キー集合と一致するキー集合は isValid=true、missingKeys は空") {
+        // Given: requiredInfoPlistKeys そのもの
+        let keys = AppBundlePolicy.requiredInfoPlistKeys
+
+        // When: isValid と missingKeys を呼ぶ
+        let valid = AppBundlePolicy.isValid(keys: keys)
+        let missing = AppBundlePolicy.missingKeys(keys: keys)
+
+        // Then: valid=true、missing は空
+        assertTrue(valid, "必須キー一致集合は isValid=true")
+        assertEqual(missing, [], "missingKeys は空")
+    }
+
+    scenario("必須キー集合に追加キーを足しても isValid は true のまま（superset を許容）") {
+        // Given: 必須 + 追加 1 件（任意の Info.plist の現実）
+        var keys = AppBundlePolicy.requiredInfoPlistKeys
+        keys.insert("LSUIElement")
+        keys.insert("LSMinimumSystemVersion")
+
+        // When: isValid / missingKeys を呼ぶ
+        let valid = AppBundlePolicy.isValid(keys: keys)
+        let missing = AppBundlePolicy.missingKeys(keys: keys)
+
+        // Then: valid=true（superset OK）、missing は空
+        assertTrue(valid, "必須キーの superset は isValid=true")
+        assertEqual(missing, [], "superset でも missingKeys は空")
+    }
+
+    scenario("CFBundleVersion を欠いた集合は isValid=false、missingKeys に CFBundleVersion が含まれる") {
+        // Given: CFBundleVersion を削った集合
+        var keys = AppBundlePolicy.requiredInfoPlistKeys
+        keys.remove("CFBundleVersion")
+
+        // When: isValid / missingKeys を呼ぶ
+        let valid = AppBundlePolicy.isValid(keys: keys)
+        let missing = AppBundlePolicy.missingKeys(keys: keys)
+
+        // Then: valid=false、missing は CFBundleVersion を含む
+        assertFalse(valid, "CFBundleVersion 欠落で isValid=false")
+        assertTrue(missing.contains("CFBundleVersion"), "missingKeys に CFBundleVersion")
+        assertEqual(missing.count, 1, "欠落は 1 件")
+    }
+
+    scenario("空集合は isValid=false、missingKeys は 6 件全て") {
+        // Given: 空集合
+        let keys: Set<String> = []
+
+        // When: isValid / missingKeys を呼ぶ
+        let valid = AppBundlePolicy.isValid(keys: keys)
+        let missing = AppBundlePolicy.missingKeys(keys: keys)
+
+        // Then: valid=false、missing は 6 件
+        assertFalse(valid, "空集合は isValid=false")
+        assertEqual(missing.count, 6, "missingKeys は必須キー数（6）と一致")
+        assertEqual(missing, AppBundlePolicy.requiredInfoPlistKeys,
+                    "空集合の missingKeys は requiredInfoPlistKeys そのもの")
+    }
+
+    scenario("stampedKey は固定値 'CFBundleVersion'") {
+        // Given: AppBundlePolicy.stampedKey
+        // When: 値を取り出す
+        let key = AppBundlePolicy.stampedKey
+
+        // Then: 'CFBundleVersion' リテラルと一致
+        assertEqual(key, "CFBundleVersion", "stampedKey は 'CFBundleVersion'")
+    }
+}
+
 // MARK: - 集計と終了
 
 CheckRunner.shared.finishAndExit()
